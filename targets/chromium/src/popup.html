@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Popup</title>
+    <style>
+      :root { color-scheme: light dark; font: 13px -apple-system, system-ui, sans-serif; }
+      body { width: 300px; margin: 0; padding: 12px; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      .muted { opacity: 0.7; }
+      .error { color: #d33; }
+      form { display: flex; gap: 6px; }
+      input { flex: 1; font: inherit; padding: 6px; letter-spacing: 0.2em; }
+      button { font: inherit; padding: 6px 10px; cursor: pointer; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li button { width: 100%; text-align: left; margin-bottom: 4px; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title"></h1>
+    <p id="message" class="muted"></p>
+    <form id="pin-form" hidden>
+      <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required />
+      <button type="submit">Unlock</button>
+    </form>
+    <button id="pair" hidden>Show code on Mac</button>
+    <ul id="logins"></ul>
+    <p id="error" class="error" hidden></p>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
