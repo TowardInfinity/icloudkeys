@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "test": "node build.mjs && vitest run"
   },
   "dependencies": {
     "@icloudkeys/classifier": "workspace:*",

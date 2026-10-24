@@ -32,6 +32,10 @@ export interface Vault {
 export class FakeHelper {
   base64 = false;
   pin = "424242";
+  /** Never answer GET_CAPABILITIES, like a helper stuck behind a permission prompt. */
+  silent = false;
+  /** How many ports the client has opened. */
+  connections = 0;
   /** Every message the client sent, for assertions. */
   readonly received: HelperMessage[] = [];
   private onMsg: (m: HelperMessage) => void = () => {};
@@ -43,6 +47,7 @@ export class FakeHelper {
   constructor(private readonly vault: Vault = {}) {}
 
   port(): HelperPort {
+    this.connections++;
     return {
       postMessage: (m) => {
         this.received.push(m);
@@ -75,6 +80,7 @@ export class FakeHelper {
   private async handle(m: HelperMessage): Promise<HelperMessage | undefined> {
     switch (m.cmd) {
       case 14:
+        if (this.silent) return undefined;
         return { cmd: 14, capabilities: { shouldUseBase64: this.base64, secretSessionVersion: 1 } };
       case 2:
         return m.msg.QID === "m0" ? this.hello(m) : this.verify(m);

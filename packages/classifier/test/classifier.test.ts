@@ -65,7 +65,7 @@ async function classify(page: Page, selector: string): Promise<string | null> {
   }, selector);
 }
 
-// the 23 fields from open-passwords' adversarial suite that must never get a login offer
+// open-passwords' 23 adversarial fields, plus one of ours, that must never get a login offer
 const negatives: [string, string[]][] = [
   ["search-bar", ["#header-search", "#inline-search", "#form-search"]],
   ["social-tag", ["#tag-search", "#tag-combobox"]],
@@ -77,6 +77,8 @@ const negatives: [string, string[]][] = [
   ["otp-password-field", ["#otp-pass"]],
   ["mixed-footer-email", ["#foot-email"]],
   ["waitlist", ["#waitlist-email"]],
+  // not from open-passwords: isolates the address-form fix behind a "Sign in" button
+  ["checkout-signin", ["#email"]],
 ];
 
 describe.each(negatives)("adversarial/%s", (page, selectors) => {

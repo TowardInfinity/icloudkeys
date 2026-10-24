@@ -104,6 +104,7 @@ export class PasswordsClient {
   private challengeAt = 0;
   private challengeGen = 0;
   private challengePending: Promise<boolean> | undefined;
+  private connecting: Promise<void> | undefined;
   // replies carry no correlation id, so requests on the same cmd would collide: serialize all
   private lock: Promise<unknown> = Promise.resolve();
 
@@ -183,8 +184,14 @@ export class PasswordsClient {
   }
 
   /** Opens the port and reads capabilities. A live, unlocked connection is left untouched. */
-  async connect(): Promise<void> {
-    if (this.port) return;
+  connect(): Promise<void> {
+    if (this.session) return Promise.resolve();
+    // concurrent callers share one attempt, so none proceeds before the session exists
+    this.connecting ??= this.open().finally(() => (this.connecting = undefined));
+    return this.connecting;
+  }
+
+  private async open(): Promise<void> {
     let port: HelperPort;
     try {
       port = this.opts.connect();
@@ -198,12 +205,18 @@ export class PasswordsClient {
       if (this.port === port) this.dropConnection(reason);
     });
 
-    const reply = await this.send(Command.GET_CAPABILITIES);
-    const caps = (reply.capabilities ?? {}) as Record<string, unknown>;
-    // the helper negotiates per handshake via PROTO, so only an explicit non-RFC demand is fatal
-    if (caps.secretSessionVersion !== undefined && caps.secretSessionVersion !== SecretSessionVersion.SRPWithRFCVerification) {
-      this.disconnect();
-      throw new ProtocolError("helper requires an unsupported SRP verification mode");
+    let caps: Record<string, unknown>;
+    try {
+      const reply = await this.send(Command.GET_CAPABILITIES);
+      caps = (reply.capabilities ?? {}) as Record<string, unknown>;
+      // the helper negotiates per handshake via PROTO, so only an explicit non-RFC demand is fatal
+      if (caps.secretSessionVersion !== undefined && caps.secretSessionVersion !== SecretSessionVersion.SRPWithRFCVerification) {
+        throw new ProtocolError("helper requires an unsupported SRP verification mode");
+      }
+    } catch (e) {
+      // a half-open port with no session would make every later connect() a no-op
+      if (this.port === port) this.disconnect();
+      throw e;
     }
     this.capabilities = caps;
     this.session = new SRPSession({ base64: caps.shouldUseBase64 === true, ...this.opts.sessionOptions });

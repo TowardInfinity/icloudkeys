@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PasswordsClient, ProtocolError, type State } from "../src/protocol.ts";
 import { FakeHelper } from "./fake-helper.ts";
 
@@ -130,5 +130,27 @@ describe("protocol", () => {
     helper.drop("closed");
     expect(client.state).toBe("disconnected");
     expect(client.ready).toBe(false);
+  });
+
+  it("recovers after the capabilities request times out", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { client, helper } = setup();
+      helper.silent = true;
+      const first = client.connect();
+      const second = client.connect(); // shares the attempt instead of racing it
+      const settled = Promise.allSettled([first, second]);
+      await vi.advanceTimersByTimeAsync(5001);
+      expect((await settled).map((r) => r.status)).toEqual(["rejected", "rejected"]);
+      expect(helper.connections).toBe(1);
+      expect(client.state).toBe("disconnected");
+
+      helper.silent = false;
+      await client.connect();
+      expect(helper.connections).toBe(2);
+      expect(client.state).toBe("needs_pin");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

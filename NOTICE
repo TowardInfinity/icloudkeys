@@ -23,7 +23,8 @@ Derived vs original, by file:
   packages/classifier/src/
                       derived from Open Passwords' src/content.js.
   packages/classifier/test/fixtures/
-                      copied from Open Passwords' test-harness/.
+                      copied from Open Passwords' test-harness/, except
+                      adversarial/checkout-signin.html, which is original.
   targets/chromium/   original.
 
 A copy of the Apache License 2.0 is in LICENSE and at
