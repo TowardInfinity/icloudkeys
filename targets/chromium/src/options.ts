@@ -11,6 +11,9 @@ $("inPageAutoFill-detail").textContent =
 $("browserAutoFillOff-detail").textContent =
   `Stop the browser saving and filling passwords, addresses and cards, so its own prompts don't cover ${NAME}'s list. Turning this back off restores the browser's settings.`;
 
+$("hideBrowserPasskeys-detail").textContent =
+  `Stop the browser's "Use Passkey" list opening over ${NAME}'s under sign-in fields. A site's own passkey button still works. Applies to pages loaded after the change.`;
+
 function fail(e: unknown): void {
   error.textContent = e instanceof Error ? e.message : String(e);
   error.hidden = false;
@@ -45,4 +48,7 @@ box("browserAutoFillOff").addEventListener("change", async (e) => {
     input.checked = !off;
     fail(err);
   }
+});
+box("hideBrowserPasskeys").addEventListener("change", (e) => {
+  void saveSettings({ hideBrowserPasskeys: (e.target as HTMLInputElement).checked }).catch(fail);
 });

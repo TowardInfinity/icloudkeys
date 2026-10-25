@@ -7,9 +7,11 @@ export interface Settings {
   keyButton: boolean;
   /** We turned the browser's own password and form AutoFill off, and own those settings. */
   browserAutoFillOff: boolean;
+  /** Keep the browser's passkey suggestions from opening under fields. */
+  hideBrowserPasskeys: boolean;
 }
 
-export const DEFAULTS: Settings = { inPageAutoFill: true, keyButton: true, browserAutoFillOff: false };
+export const DEFAULTS: Settings = { inPageAutoFill: true, keyButton: true, browserAutoFillOff: false, hideBrowserPasskeys: false };
 
 export async function loadSettings(): Promise<Settings> {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULTS)).catch(() => ({}));
@@ -48,5 +50,20 @@ export async function setBrowserAutoFill(off: boolean): Promise<void> {
     if (!setting) continue;
     if (off) await setting.set({ value: false });
     else await setting.clear({});
+  }
+}
+
+const PASSKEY_SCRIPT = "hide-passkeys";
+
+/** Registers the page-world script that hides passkey suggestions, or removes it. Pages pick it up on load. */
+export async function setPasskeyHiding(hide: boolean): Promise<void> {
+  const registered = (await chrome.scripting.getRegisteredContentScripts({ ids: [PASSKEY_SCRIPT] })).length > 0;
+  if (hide && !registered) {
+    await chrome.scripting.registerContentScripts([
+      // before the page's own scripts, which ask for passkey autofill as they load
+      { id: PASSKEY_SCRIPT, js: ["passkeys.js"], matches: ["http://*/*", "https://*/*"], runAt: "document_start", allFrames: true, world: "MAIN" },
+    ]);
+  } else if (!hide && registered) {
+    await chrome.scripting.unregisterContentScripts({ ids: [PASSKEY_SCRIPT] });
   }
 }

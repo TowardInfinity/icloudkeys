@@ -86,6 +86,14 @@ describe("settings page", () => {
     await page.close();
   });
 
+  it("saves Hide Browser Passkey Suggestions, off by default", async () => {
+    const page = await open();
+    expect(await page.isChecked("#hideBrowserPasskeys")).toBe(false);
+    await page.check("#hideBrowserPasskeys");
+    await expect.poll(() => log(page)).toEqual([["save", { hideBrowserPasskeys: true }]]);
+    await page.close();
+  });
+
   it("leaves the browser's AutoFill alone when the permission is refused", async () => {
     const page = await open();
     await page.evaluate(() => ((window as any).__grant = false));

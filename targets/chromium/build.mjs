@@ -37,6 +37,18 @@ await build({
   },
 });
 
+// runs in the page's world, so it's bundled on its own
+await build({
+  configFile: false,
+  logLevel: "warn",
+  build: {
+    outDir,
+    emptyOutDir: false,
+    target: "chrome120",
+    lib: { entry: here("./src/passkeys.ts"), formats: ["iife"], name: "icloudkeysPasskeys", fileName: () => "passkeys.js" },
+  },
+});
+
 await cp(here("./icons"), here("./dist/icons"), { recursive: true });
 const icons = Object.fromEntries([16, 32, 48, 128].map((n) => [n, `icons/icon-${n}.png`]));
 
@@ -54,7 +66,7 @@ const manifest = {
     { matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle", all_frames: true },
   ],
   // header rewrites for Hide My Email; scoped to our own requests in packages/hme/src/dnr.ts
-  permissions: ["nativeMessaging", "declarativeNetRequestWithHostAccess", "storage"],
+  permissions: ["nativeMessaging", "declarativeNetRequestWithHostAccess", "storage", "scripting"],
   // asked for only when the user turns the browser's AutoFill off in settings
   optional_permissions: ["privacy"],
   host_permissions: ["http://*/*", "https://*/*"],

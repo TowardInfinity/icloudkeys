@@ -3,6 +3,7 @@ import { HmeClient, dnrRules } from "@icloudkeys/hme";
 import type { FillResult, ToContent } from "./messages.ts";
 import { NAME } from "./name.ts";
 import { createRouter } from "./router.ts";
+import { loadSettings, onSettingsChange, setPasskeyHiding } from "./settings.ts";
 
 function connectNative(): HelperPort {
   const port = chrome.runtime.connectNative(HOST_NAME);
@@ -25,6 +26,12 @@ const client = new PasswordsClient({ connect: connectNative });
 void chrome.declarativeNetRequest
   .updateSessionRules({ removeRuleIds: [1, 2], addRules: dnrRules(chrome.runtime.id) as chrome.declarativeNetRequest.Rule[] })
   .catch((e) => console.warn(`${NAME}: Hide My Email header rules not installed`, e));
+
+// the setting is the source of truth; the registration follows it on every worker start and change
+const syncPasskeys = (hide: boolean) =>
+  setPasskeyHiding(hide).catch((e) => console.warn(`${NAME}: passkey suggestions setting not applied`, e));
+void loadSettings().then((s) => syncPasskeys(s.hideBrowserPasskeys));
+onSettingsChange((s) => void syncPasskeys(s.hideBrowserPasskeys));
 
 const hme = new HmeClient({
   // the iCloud session lives in icloud.com cookies, which only go along with credentials
