@@ -2,7 +2,7 @@
 // can neither read nor restyle it, sits in the top layer so page dialogs can't cover it, and rows
 // act only on trusted input.
 
-export type Icon = "key" | "lock" | "mail" | "code" | "app";
+export type Icon = "key" | "lock" | "mail" | "code" | "app" | "refresh";
 
 export interface Row {
   label: string;
@@ -18,10 +18,11 @@ const ICONS: Record<Icon, string> = {
   lock: '<rect x="3" y="7" width="10" height="7.5" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
   mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="m2 4.5 6 4.5 6-4.5"/>',
   code: '<path d="M4.5 2.5h7a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H8l-3.5 2.5v-2.5a3 3 0 0 1-3-3v-3a3 3 0 0 1 3-3Z"/>',
+  refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/>',
   app: '<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5"/>',
 };
 
-const svg = (icon: Icon) =>
+export const svg = (icon: Icon) =>
   `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>`;
 
 const CSS = `
@@ -56,7 +57,7 @@ const CSS = `
 `;
 
 // set inline with !important: a popover host otherwise takes UA popover styles, and the page can target the tag
-const HOST_STYLE: Record<string, string> = {
+export const HOST_STYLE: Record<string, string> = {
   position: "fixed", inset: "auto", margin: "0", padding: "0", border: "0", background: "transparent",
   overflow: "visible", "z-index": "2147483647", display: "block", opacity: "1", visibility: "visible",
   width: "auto", height: "auto", "max-width": "none", "max-height": "none", transform: "none", filter: "none",
@@ -157,13 +158,7 @@ export class Dropdown {
     root.append(style, box);
     this.host = host;
     this.box = box;
-    // inside an open modal dialog, anything outside it is inert and can't be clicked
-    const modal = anchor.closest("dialog");
-    (modal?.open && modal.ownerDocument === doc ? modal : doc.documentElement).append(host);
-    if ("showPopover" in host) {
-      host.popover = "manual";
-      host.showPopover();
-    }
+    mount(host, anchor);
     if (doc !== document) {
       doc.addEventListener("click", this.onSurfaceClick, true);
       doc.defaultView?.addEventListener("scroll", this.onMove, true);
@@ -297,7 +292,8 @@ export class Dropdown {
     if (e.composedPath()[0] !== this.anchor) return;
     const n = this.rows.length;
     if (e.key === "ArrowDown") this.select((this.active + 1) % n);
-    else if (e.key === "ArrowUp") this.select((this.active - 1 + n) % n);
+    // from nothing selected, up goes to the last row
+    else if (e.key === "ArrowUp") this.select(this.active < 0 ? n - 1 : (this.active - 1 + n) % n);
     else if (e.key === "Enter" && this.active >= 0) {
       e.stopPropagation();
       this.pick(this.active);
@@ -309,6 +305,8 @@ export class Dropdown {
     if (!e.isTrusted) return;
     const path = e.composedPath();
     if (this.host && path.includes(this.host)) return;
+    // the key button in the field opens and closes the list itself
+    if (path.some((n) => n instanceof Element && n.localName === "icloudkeys-key")) return;
     if (Date.now() - this.pressedAt < 700) {
       this.pressedAt = 0;
       e.preventDefault();
@@ -316,5 +314,16 @@ export class Dropdown {
       return;
     }
     if (!path.includes(this.anchor as EventTarget)) this.close();
+  }
+}
+
+/** Puts a host in the top layer, inside the field's modal dialog if it has one. */
+export function mount(host: HTMLElement, anchor: HTMLInputElement): void {
+  // inside an open modal dialog, anything outside it is inert and can't be clicked
+  const modal = anchor.closest("dialog");
+  (modal?.open && modal.ownerDocument === host.ownerDocument ? modal : host.ownerDocument.documentElement).append(host);
+  if ("showPopover" in host) {
+    host.popover = "manual";
+    host.showPopover();
   }
 }

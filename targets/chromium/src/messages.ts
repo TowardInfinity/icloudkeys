@@ -27,7 +27,10 @@ export type ContentRequest =
   | { type: "offerSave"; username: string; password: string; isNew: boolean }
   | { type: "openPopup" }
   | { type: "inlineLaunch" }
-  | { type: "hmeCreate" };
+  /** Shows an address; nothing is created in iCloud until `hmeReserve`. */
+  | { type: "hmeGenerate" }
+  /** Creates the address last generated for this frame. Takes no address: a page can't name one. */
+  | { type: "hmeReserve" };
 
 export type Request = UiRequest | ContentRequest;
 

@@ -40,13 +40,18 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "offerSave",
   "openPopup",
   "inlineLaunch",
-  "hmeCreate",
+  "hmeGenerate",
+  "hmeReserve",
 ]);
 
 // a listed code is picked within seconds; past this the list is stale and a TOTP has rotated
 const CODE_LIST_TTL_MS = 2 * 60_000;
 // one alias per page per interval, so a page script can't fill the user's alias list
 const HME_COOLDOWN_MS = 10_000;
+// Refresh asks iCloud for another address; a held-down Enter must not hammer it
+const HME_GENERATE_GAP_MS = 2_000;
+// an address shown in the list and never used goes back to iCloud's pool
+const HME_PENDING_TTL_MS = 5 * 60_000;
 // how long an iCloud.com sign-in check holds, so focusing email fields doesn't hammer validate
 const HME_SESSION_TTL_MS = 5 * 60_000;
 // short when unavailable, so signing in to iCloud.com takes effect on the next field
@@ -82,6 +87,9 @@ export function createRouter(env: RouterEnv) {
   const now = () => env.now?.() ?? Date.now();
   const codesByTab = new Map<number, { at: number; entries: OneTimeCode[]; target: FrameTarget }>();
   const hmeAt = new Map<number, number>();
+  const hmeGeneratedAt = new Map<number, number>();
+  // the address shown to each tab; a page can only ever reserve the one we generated for it
+  const hmePending = new Map<number, { at: number; frameId: number; host: string; address: string }>();
   let hmeSession: { at: number; value: HmeSession } | undefined;
 
   const status = (): Status => ({
@@ -171,6 +179,31 @@ export function createRouter(env: RouterEnv) {
     return { ok: true, status: status(), address };
   }
 
+  async function generateAlias(at: Where): Promise<Response> {
+    if (!env.hme) throw new Refused("Hide My Email is not available");
+    if (now() - (hmeGeneratedAt.get(at.tabId) ?? -Infinity) < HME_GENERATE_GAP_MS) throw new Refused("wait a moment");
+    hmeGeneratedAt.set(at.tabId, now());
+    const address = await env.hme.generate().catch((e) => {
+      hmeSession = undefined;
+      throw e;
+    });
+    hmePending.set(at.tabId, { at: now(), frameId: at.frameId, host: at.host, address });
+    return { ok: true, status: status(), address };
+  }
+
+  async function reserveAlias(at: Where): Promise<Response> {
+    if (!env.hme) throw new Refused("Hide My Email is not available");
+    const pending = hmePending.get(at.tabId);
+    if (!pending || now() - pending.at > HME_PENDING_TTL_MS) throw new Refused("no address to use, choose Hide My Email again");
+    // shown to one frame of one site; a navigation or another frame can't claim it
+    if (pending.frameId !== at.frameId || pending.host !== at.host) throw new Refused("address shown for another page");
+    if (now() - (hmeAt.get(at.tabId) ?? -Infinity) < HME_COOLDOWN_MS) throw new Refused("wait a moment before creating another address");
+    hmeAt.set(at.tabId, now());
+    hmePending.delete(at.tabId);
+    await env.hme.reserve(pending.address, at.host, `Generated through ${env.appName}`);
+    return { ok: true, status: status(), address: pending.address };
+  }
+
   async function ui(req: UiRequest): Promise<Response> {
     switch (req.type) {
       case "status":
@@ -255,8 +288,10 @@ export function createRouter(env: RouterEnv) {
         // the search is for the asking frame's own page, never a URL the page names
         client.launchPasswordsApp(at.frameUrls[0] ? { searchUrl: at.frameUrls[0] } : {});
         return { ok: true, status: status() };
-      case "hmeCreate":
-        return createAlias(at);
+      case "hmeGenerate":
+        return generateAlias(at);
+      case "hmeReserve":
+        return reserveAlias(at);
     }
   }
 

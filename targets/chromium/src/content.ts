@@ -17,10 +17,14 @@ import {
 } from "@icloudkeys/classifier";
 import { alphanumericPasswordFor, strongPasswordFor, type Login } from "@icloudkeys/core";
 import { Dropdown, type Row } from "./dropdown.ts";
+import { KeyButton } from "./keybutton.ts";
 import type { ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
 import { NAME } from "./name.ts";
 
 const dropdown = new Dropdown(NAME);
+const keyButton = new KeyButton(NAME);
+/** Options from the settings page; the defaults hold until storage answers. */
+const settings = { inPageAutoFill: true, keyButton: true };
 // the field the user last focused; fills go next to it
 let loginAnchor: HTMLInputElement | null = null;
 let codeAnchor: HTMLInputElement | null = null;
@@ -92,12 +96,28 @@ function generatedRows(field: HTMLInputElement, res: Response | undefined): Row[
       detail: password,
       icon: "lock",
       onPick: () => {
-        fillNewPassword(field, password);
+        highlight(fillNewPassword(field, password), password);
         lastGenerated = { password, at: Date.now() };
       },
     });
   }
   return rows;
+}
+
+// Safari's strong-password yellow, until the user edits the password
+const HIGHLIGHT = { "background-color": "#fff8c4", color: "#1d1d1f" };
+
+function highlight(fields: HTMLInputElement[], password: string): void {
+  for (const f of fields) {
+    const saved = Object.keys(HIGHLIGHT).map((k) => [k, f.style.getPropertyValue(k), f.style.getPropertyPriority(k)] as const);
+    for (const [k, v] of Object.entries(HIGHLIGHT)) f.style.setProperty(k, v, "important");
+    const restore = (e: Event) => {
+      if (!e.isTrusted || f.value === password) return;
+      for (const [k, v, prio] of saved) v ? f.style.setProperty(k, v, prio) : f.style.removeProperty(k);
+      f.removeEventListener("input", restore, true);
+    };
+    f.addEventListener("input", restore, true);
+  }
 }
 
 // a typed "ali" finds alice@example.com, and so does "alice@"
@@ -180,19 +200,40 @@ function aliasRow(field: HTMLInputElement): Row {
     label: "Hide My Email",
     detail: "Create a new iCloud address for this site",
     icon: "mail",
-    onPick: async () => {
-      const res = await send({ type: "hmeCreate" });
-      if (!res?.ok || !res.address) {
-        dropdown.show(field, [{ label: "Hide My Email unavailable", detail: res && !res.ok ? res.error : undefined, onPick: () => {} }]);
-        return;
-      }
-      if (!field.value) setFieldValue(field, res.address);
-    },
+    onPick: () => void offerAlias(field),
   };
+}
+
+// as in Safari: show the address with Use and Refresh, and create nothing until Use
+async function offerAlias(field: HTMLInputElement): Promise<void> {
+  const res = await send({ type: "hmeGenerate" });
+  if (!res?.ok || !res.address) return aliasFailed(field, res);
+  const address = res.address;
+  dropdown.show(field, [
+    {
+      label: address,
+      detail: "Use this address, forwarded to your inbox",
+      icon: "mail",
+      onPick: async () => {
+        const used = await send({ type: "hmeReserve" });
+        if (!used?.ok || !used.address) return aliasFailed(field, used);
+        if (!field.value) setFieldValue(field, used.address);
+      },
+    },
+    { label: "Refresh", detail: "Show a different address", icon: "refresh", footer: true, onPick: () => void offerAlias(field) },
+  ]);
+}
+
+function aliasFailed(field: HTMLInputElement, res: Response | undefined): void {
+  dropdown.show(field, [
+    { label: "Hide My Email unavailable", detail: res && !res.ok ? res.error : undefined, icon: "mail", onPick: () => {} },
+  ]);
 }
 
 function consider(field: EventTarget | null): void {
   const kind = classifyFocus(field);
+  if (kind === "login" && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
+  else keyButton.hide();
   if (kind === "otp") {
     codeAnchor = field as HTMLInputElement;
     void offerCodes(codeAnchor);
@@ -223,6 +264,20 @@ document.addEventListener(
   (e) => {
     const field = e.composedPath()[0];
     if (e.isTrusted && !dropdown.open && field instanceof HTMLInputElement && field === deepActive()) consider(field);
+  },
+  true,
+);
+
+function pressKey(field: HTMLInputElement): void {
+  if (dropdown.open && dropdown.field === field) dropdown.close();
+  else if (offer?.field === field) render();
+  else consider(field);
+}
+
+document.addEventListener(
+  "focusout",
+  (e) => {
+    if (e.isTrusted && e.composedPath()[0] === keyButton.field) keyButton.hide();
   },
   true,
 );

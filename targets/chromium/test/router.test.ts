@@ -171,14 +171,60 @@ describe("one-time codes", () => {
 });
 
 describe("Hide My Email", () => {
-  it("labels the alias with the sender's host and rate-limits a page", async () => {
+  const tab2: Sender = { id: EXT, url: "https://example.com/signup", frameId: 0, tab: { id: 2, url: "https://example.com/signup" } };
+
+  it("creates only the address it showed, labelled with the sender's host", async () => {
     const { handle, hme, advance } = await setup();
-    expect(await handle({ type: "hmeCreate", label: "spoofed" }, page())).toMatchObject({ ok: true, address: "abc@icloud.com" });
+    expect(await handle({ type: "hmeGenerate" }, page())).toMatchObject({ ok: true, address: "abc@icloud.com" });
+    expect(hme.reserve).not.toHaveBeenCalled();
+    const res = await handle({ type: "hmeReserve", address: "victim@icloud.com", label: "spoofed" } as any, page());
+    expect(res).toMatchObject({ ok: true, address: "abc@icloud.com" });
     expect(hme.reserve).toHaveBeenCalledWith("abc@icloud.com", "example.com", "Generated through iCloudKeys");
-    expect(await handle({ type: "hmeCreate" }, page())).toMatchObject({ ok: false });
+    // used up: a second Use creates nothing, even past the cooldown
     advance(10_001);
-    expect(await handle({ type: "hmeCreate" }, page())).toMatchObject({ ok: true });
-    expect(hme.reserve).toHaveBeenCalledTimes(2);
+    expect(await handle({ type: "hmeReserve" }, page())).toMatchObject({ ok: false });
+    expect(hme.reserve).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["without a shown address", async (h: any) => undefined],
+    ["from another tab", async (h: any) => h({ type: "hmeGenerate" }, tab2)],
+  ])("refuses Use %s", async (_name, before) => {
+    const { handle, hme } = await setup();
+    await before(handle);
+    expect(await handle({ type: "hmeReserve" }, page())).toMatchObject({ ok: false });
+    expect(hme.reserve).not.toHaveBeenCalled();
+  });
+
+  it("refuses Use after the tab moved to another site or frame, or the address went stale", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeGenerate" }, page());
+    expect(await handle({ type: "hmeReserve" }, page("https://evil.example/"))).toMatchObject({ ok: false });
+    expect(await handle({ type: "hmeReserve" }, page("https://example.com/login", 3))).toMatchObject({ ok: false });
+    advance(5 * 60_000 + 1);
+    expect(await handle({ type: "hmeReserve" }, page())).toMatchObject({ ok: false, error: /choose Hide My Email again/ });
+    expect(hme.reserve).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits Refresh and creation per page", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeGenerate" }, page());
+    expect(await handle({ type: "hmeGenerate" }, page())).toMatchObject({ ok: false });
+    advance(2_001);
+    await handle({ type: "hmeGenerate" }, page());
+    expect(hme.generate).toHaveBeenCalledTimes(2);
+    await handle({ type: "hmeReserve" }, page());
+    advance(2_001);
+    await handle({ type: "hmeGenerate" }, page());
+    expect(await handle({ type: "hmeReserve" }, page())).toMatchObject({ ok: false, error: /wait/ });
+    advance(10_001);
+    expect(await handle({ type: "hmeReserve" }, page())).toMatchObject({ ok: true });
+  });
+
+  it("no longer lets a page create an address in one step", async () => {
+    const { handle, hme } = await setup();
+    expect(await handle({ type: "hmeCreate" }, page())).toMatchObject({ ok: false, error: "forbidden" });
+    expect(hme.generate).not.toHaveBeenCalled();
   });
 });
 

@@ -377,7 +377,8 @@ export function collectSubmitted(scope: ParentNode = document): Submitted | null
 }
 
 /** Puts a generated password into `field` and the empty confirm fields of its form. */
-export function fillNewPassword(field: HTMLInputElement, password: string): void {
+/** Fills `password` into the field and its empty confirm fields, and returns every field filled. */
+export function fillNewPassword(field: HTMLInputElement, password: string): HTMLInputElement[] {
   const targets = new Set([field]);
   for (const p of Array.from(document.querySelectorAll("input")).filter((i) => isPasswordField(i) && isFillable(i))) {
     if (!p.value && (!field.form || p.form === field.form)) targets.add(p);
@@ -386,6 +387,7 @@ export function fillNewPassword(field: HTMLInputElement, password: string): void
     setFieldValue(t, password);
     everPassword.add(t);
   }
+  return [...targets];
 }
 
 function otpBoxGroup(el: HTMLInputElement): HTMLInputElement[] | null {

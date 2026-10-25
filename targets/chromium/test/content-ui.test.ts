@@ -50,7 +50,8 @@ const STUB = `(() => {
       // logins ride along on every reply, so only the content script's own gating keeps them off a field
       const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
       if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
-      if (msg.type === "hmeCreate") return { ...base, address: "x7@icloud.com" };
+      if (msg.type === "hmeGenerate") return { ...base, address: "x" + window.__sent.filter((m) => m.type === "hmeGenerate").length + "@icloud.com" };
+      if (msg.type === "hmeReserve") return { ...base, address: "x" + window.__sent.filter((m) => m.type === "hmeGenerate").length + "@icloud.com" };
       return base;
     },
     onMessage: { addListener: (fn) => listeners.push(fn) },
@@ -155,7 +156,33 @@ describe("dropdown", () => {
     await expect.poll(() => dropdownShown(page)).toBe(true);
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect.poll(() => page.inputValue("#email")).toBe("x7@icloud.com");
+    // the address is shown first and nothing is created until Use
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect((await sent(page)).map((m) => m.type)).not.toContain("hmeReserve");
+    expect(await page.inputValue("#email")).toBe("");
+    // Refresh, then Use the second address
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "hmeGenerate").length).toBe(2);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.inputValue("#email")).toBe("x2@icloud.com");
+    expect((await sent(page)).filter((m) => m.type === "hmeReserve")).toEqual([{ type: "hmeReserve" }]);
+    await page.close();
+  });
+
+  it("marks a generated password yellow until the user edits it", async () => {
+    const page = await open("/signup");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const bg = (sel: string) => page.$eval(sel, (el) => getComputedStyle(el).backgroundColor);
+    await expect.poll(() => bg("#pw")).toBe("rgb(255, 248, 196)");
+    expect(await bg("#pw2")).toBe("rgb(255, 248, 196)");
+    await page.keyboard.type("x");
+    await expect.poll(() => bg("#pw")).not.toBe("rgb(255, 248, 196)");
     await page.close();
   });
 
@@ -276,6 +303,25 @@ describe("like Safari's list", () => {
       d.showModal();
     });
     await expect.poll(() => dropdownShown(page)).toBe(false);
+    await page.close();
+  });
+
+  it("puts a key button in a focused login field that toggles the list", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const key = await page.evaluate(() => {
+      const r = document.querySelector("icloudkeys-key")?.getBoundingClientRect();
+      return r && { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    expect(key).toBeTruthy();
+    await page.mouse.click(key!.x, key!.y);
+    expect(await dropdownShown(page)).toBe(false);
+    await page.mouse.click(key!.x, key!.y);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("pw");
+    await page.mouse.click(5, 400);
+    expect(await page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(false);
     await page.close();
   });
 
