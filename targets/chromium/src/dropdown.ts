@@ -1,41 +1,123 @@
 // The suggestion list shown under a focused field. It lives in a closed shadow root so the page
-// can neither read nor restyle it, and rows act only on trusted input.
+// can neither read nor restyle it, sits in the top layer so page dialogs can't cover it, and rows
+// act only on trusted input.
+
+export type Icon = "key" | "lock" | "mail" | "code" | "app";
 
 export interface Row {
   label: string;
   detail?: string;
+  icon?: Icon;
+  /** A quieter action row, such as "Open Passwords App". */
+  footer?: boolean;
   onPick(): void;
 }
 
+const ICONS: Record<Icon, string> = {
+  key: '<circle cx="5" cy="8" r="3"/><path d="M8 8h7M12.5 8v3M14.5 8v2"/>',
+  lock: '<rect x="3" y="7" width="10" height="7.5" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
+  mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="m2 4.5 6 4.5 6-4.5"/>',
+  code: '<path d="M4.5 2.5h7a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H8l-3.5 2.5v-2.5a3 3 0 0 1-3-3v-3a3 3 0 0 1 3-3Z"/>',
+  app: '<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5"/>',
+};
+
+const svg = (icon: Icon) =>
+  `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>`;
+
 const CSS = `
-:host { all: initial; }
 .box {
-  position: fixed; z-index: 2147483647; min-width: 220px; max-width: 360px; max-height: 280px;
-  overflow-y: auto; color-scheme: light dark; background: Canvas; color: CanvasText;
-  border: 1px solid rgba(128,128,128,.35); border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.10);
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --fg: #1d1d1f; --dim: rgba(0,0,0,.55); --band: rgba(100,100,100,.1); --rule: rgba(100,100,100,.14);
+  box-sizing: border-box; min-width: 200px; max-width: 380px; overflow-y: auto; overscroll-behavior: contain;
+  color: var(--fg); background: rgba(246,246,246,.86);
+  -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0,0,0,.16); border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,.15), 0 8px 15px 6px rgba(0,0,0,.18);
+  font: 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  text-align: left; direction: ltr; user-select: none;
 }
-.head { padding: 6px 12px; font-size: 11px; font-weight: 600; opacity: .55; border-bottom: 1px solid rgba(128,128,128,.18); }
-.row { padding: 7px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row[aria-selected="true"] { background: rgba(10,132,255,.18); }
-.detail { display: block; font-size: 11px; opacity: .6; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-color-scheme: dark) {
+  .box { --fg: #f5f5f7; --dim: rgba(255,255,255,.55); --band: rgba(0,0,0,.2); --rule: rgba(255,255,255,.08);
+    background: rgba(38,38,40,.86); border-color: rgba(0,0,0,.6); }
+}
+.head { position: sticky; top: 0; display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+  font-size: 12px; font-weight: 500; color: var(--dim); background: var(--band); }
+.head .icon { width: 13px; height: 13px; }
+.row { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-height: 44px; padding: 2px 12px;
+  border-top: 1px solid var(--rule); cursor: default; }
+.head + .row { border-top: 0; }
+.row.footer { min-height: 34px; }
+.icon { flex: none; width: 16px; height: 16px; color: var(--dim); }
+.text { display: flex; flex-direction: column; min-width: 0; }
+.label, .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label { font-size: 14px; line-height: 20px; }
+.detail { font-size: 12px; line-height: 16px; color: var(--dim); }
+.row[aria-selected="true"] { background: #0a84ff; color: #fff; }
+.row[aria-selected="true"] .detail, .row[aria-selected="true"] .icon { color: rgba(255,255,255,.85); }
 `;
+
+// set inline with !important: a popover host otherwise takes UA popover styles, and the page can target the tag
+const HOST_STYLE: Record<string, string> = {
+  position: "fixed", inset: "auto", margin: "0", padding: "0", border: "0", background: "transparent",
+  overflow: "visible", "z-index": "2147483647", display: "block", opacity: "1", visibility: "visible",
+  width: "auto", height: "auto", "max-width": "none", "max-height": "none", transform: "none", filter: "none",
+  "clip-path": "none", "pointer-events": "auto", "color-scheme": "light dark", contain: "none",
+};
+
+// header plus four and a half rows, the half row hinting that it scrolls
+const MAX_HEIGHT = 26 + 4.5 * 45;
+// a field still settling into place after focus (an animated dialog) is followed this long
+const TRACK_MS = 5_000;
+
+/** Where the list is drawn: the topmost same-origin document, so an iframe doesn't clip it. */
+function drawingSurface(anchor: HTMLInputElement): { doc: Document; offset: () => { x: number; y: number } } {
+  const frames: Element[] = [];
+  let win: Window | null = anchor.ownerDocument.defaultView;
+  try {
+    // frameElement is null across origins, so a cross-origin parent never draws our list
+    while (win?.frameElement) {
+      frames.push(win.frameElement);
+      win = win.parent;
+    }
+  } catch {
+    frames.length = 0;
+  }
+  const doc = frames.length ? frames[frames.length - 1]!.ownerDocument : anchor.ownerDocument;
+  return {
+    doc,
+    offset() {
+      let x = 0;
+      let y = 0;
+      for (const f of frames) {
+        const r = f.getBoundingClientRect();
+        const cs = f.ownerDocument.defaultView!.getComputedStyle(f);
+        x += r.left + f.clientLeft + parseFloat(cs.paddingLeft);
+        y += r.top + f.clientTop + parseFloat(cs.paddingTop);
+      }
+      return { x, y };
+    },
+  };
+}
 
 export class Dropdown {
   private host: HTMLElement | undefined;
   private box: HTMLElement | undefined;
   private anchor: HTMLInputElement | undefined;
+  private surface: ReturnType<typeof drawingSurface> | undefined;
   private rows: { el: HTMLElement; row: Row }[] = [];
   private active = -1;
+  private tracker: ReturnType<typeof setInterval> | undefined;
+  private shownAt = 0;
   // a press on a row that the page then sees as a click must not act on whatever was under the box
   private pressedAt = 0;
+  private readonly onToggle = (e: Event) => this.repop(e);
+  private readonly onSurfaceClick = (e: MouseEvent) => this.onPageClick(e);
+  private readonly onMove = () => this.position();
 
   constructor(private readonly title: string) {
     document.addEventListener("keydown", (e) => this.onKey(e), true);
     document.addEventListener("click", (e) => this.onPageClick(e), true);
-    addEventListener("scroll", () => this.position(), true);
-    addEventListener("resize", () => this.position());
+    addEventListener("scroll", this.onMove, true);
+    addEventListener("resize", this.onMove);
   }
 
   get open(): boolean {
@@ -55,64 +137,126 @@ export class Dropdown {
     this.close();
     if (!rows.length) return;
     this.anchor = anchor;
-    this.host = document.createElement("icloudkeys-suggestions");
-    const root = this.host.attachShadow({ mode: "closed" });
-    const style = document.createElement("style");
+    this.surface = drawingSurface(anchor);
+    const doc = this.surface.doc;
+    const host = doc.createElement("icloudkeys-suggestions");
+    for (const [k, v] of Object.entries(HOST_STYLE)) host.style.setProperty(k, v, "important");
+    const root = host.attachShadow({ mode: "closed" });
+    const style = doc.createElement("style");
     style.textContent = CSS;
-    const box = document.createElement("div");
+    const box = doc.createElement("div");
     box.className = "box";
     box.setAttribute("role", "listbox");
     box.setAttribute("aria-label", `${this.title} suggestions`);
-    const head = document.createElement("div");
+    const head = doc.createElement("div");
     head.className = "head";
-    head.textContent = this.title;
+    head.innerHTML = svg("key");
+    head.append(this.title);
     box.append(head);
-    rows.forEach((row, i) => {
-      const el = document.createElement("div");
-      el.className = "row";
-      el.setAttribute("role", "option");
-      el.textContent = row.label;
-      if (row.detail) {
-        const d = document.createElement("span");
-        d.className = "detail";
-        d.textContent = row.detail;
-        el.append(d);
-      }
-      el.addEventListener("mouseenter", () => this.select(i));
-      el.addEventListener("mousedown", (e) => {
-        if (!e.isTrusted) return;
-        // keep focus in the field
-        e.preventDefault();
-        this.pressedAt = Date.now();
-      });
-      el.addEventListener("click", (e) => {
-        if (!e.isTrusted) return;
-        e.preventDefault();
-        e.stopPropagation();
-        this.pick(i);
-      });
-      box.append(el);
-      this.rows.push({ el, row });
-    });
+    rows.forEach((row, i) => box.append(this.rowElement(doc, row, i)));
     root.append(style, box);
+    this.host = host;
     this.box = box;
-    document.documentElement.append(this.host);
+    // inside an open modal dialog, anything outside it is inert and can't be clicked
+    const modal = anchor.closest("dialog");
+    (modal?.open && modal.ownerDocument === doc ? modal : doc.documentElement).append(host);
+    if ("showPopover" in host) {
+      host.popover = "manual";
+      host.showPopover();
+    }
+    if (doc !== document) {
+      doc.addEventListener("click", this.onSurfaceClick, true);
+      doc.defaultView?.addEventListener("scroll", this.onMove, true);
+    }
+    doc.addEventListener("toggle", this.onToggle, true);
     this.position();
+    this.shownAt = Date.now();
+    this.tracker = setInterval(() => {
+      if (!this.intact()) return this.close();
+      if (Date.now() - this.shownAt < TRACK_MS) this.position();
+    }, 100);
   }
 
   close(): void {
+    clearInterval(this.tracker);
+    const doc = this.surface?.doc;
+    if (doc) {
+      doc.removeEventListener("toggle", this.onToggle, true);
+      if (doc !== document) {
+        doc.removeEventListener("click", this.onSurfaceClick, true);
+        doc.defaultView?.removeEventListener("scroll", this.onMove, true);
+      }
+    }
     this.host?.remove();
     this.host = undefined;
     this.box = undefined;
     this.anchor = undefined;
+    this.surface = undefined;
     this.rows = [];
     this.active = -1;
   }
 
+  private rowElement(doc: Document, row: Row, i: number): HTMLElement {
+    const el = doc.createElement("div");
+    el.className = row.footer ? "row footer" : "row";
+    el.setAttribute("role", "option");
+    if (row.icon) el.innerHTML = svg(row.icon);
+    const text = doc.createElement("div");
+    text.className = "text";
+    const label = doc.createElement("span");
+    label.className = "label";
+    label.textContent = row.label;
+    text.append(label);
+    if (row.detail) {
+      const d = doc.createElement("span");
+      d.className = "detail";
+      d.textContent = row.detail;
+      text.append(d);
+    }
+    el.append(text);
+    el.addEventListener("mouseenter", () => this.select(i));
+    el.addEventListener("mousedown", (e) => {
+      if (!e.isTrusted) return;
+      // keep focus in the field
+      e.preventDefault();
+      this.pressedAt = Date.now();
+    });
+    el.addEventListener("click", (e) => {
+      if (!e.isTrusted) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.pick(i);
+    });
+    this.rows.push({ el, row });
+    return el;
+  }
+
+  /** The list is shown as drawn: a page that hid or faded it could steer a click onto a row. */
+  private intact(): boolean {
+    const host = this.host;
+    if (!host?.isConnected) return false;
+    if (host.popover && !host.matches(":popover-open")) return false;
+    const view = host.ownerDocument.defaultView!;
+    for (let el: Element | null = host; el; el = el.parentElement) {
+      const cs = view.getComputedStyle(el);
+      if (cs.opacity !== "1" || cs.visibility === "hidden" || cs.display === "none") return false;
+    }
+    return true;
+  }
+
+  private repop(e: Event): void {
+    const host = this.host;
+    // another dialog or popover went into the top layer above us; go back on top
+    if (!host || e.target === host || (e as ToggleEvent).newState !== "open" || !host.matches(":popover-open")) return;
+    host.hidePopover();
+    host.showPopover();
+  }
+
   private pick(i: number): void {
     const row = this.rows[i]?.row;
+    const ok = this.intact();
     this.close();
-    row?.onPick();
+    if (ok) row?.onPick();
   }
 
   private select(i: number): void {
@@ -122,15 +266,24 @@ export class Dropdown {
   }
 
   private position(): void {
-    const el = this.box;
-    if (!el || !this.anchor) return;
+    const host = this.host;
+    const box = this.box;
+    if (!host || !box || !this.anchor || !this.surface) return;
     if (!this.anchor.isConnected) return this.close();
-    const r = this.anchor.getBoundingClientRect();
-    el.style.left = `${Math.max(4, r.left)}px`;
-    el.style.minWidth = `${Math.max(r.width, 220)}px`;
-    const h = el.offsetHeight;
-    const below = r.bottom + 2 + h <= innerHeight || r.top - 2 - h < 0;
-    el.style.top = `${below ? r.bottom + 2 : r.top - h - 2}px`;
+    const view = this.surface.doc.defaultView!;
+    const { x, y } = this.surface.offset();
+    const f = this.anchor.getBoundingClientRect();
+    const r = { left: f.left + x, top: f.top + y, bottom: f.bottom + y };
+    box.style.maxHeight = "";
+    const natural = Math.min(box.scrollHeight + 2, MAX_HEIGHT);
+    const below = view.innerHeight - r.bottom - 8;
+    const above = r.top - 8;
+    // below the field like Apple's, unless only above has room for it
+    const down = below >= natural || below >= above;
+    box.style.maxHeight = `${Math.max(60, Math.min(MAX_HEIGHT, down ? below : above))}px`;
+    const left = Math.min(Math.max(4, r.left), view.innerWidth - box.offsetWidth - 4);
+    host.style.setProperty("left", `${Math.round(Math.max(4, left))}px`, "important");
+    host.style.setProperty("top", `${Math.round(down ? r.bottom + 2 : r.top - box.offsetHeight - 2)}px`, "important");
   }
 
   private onKey(e: KeyboardEvent): void {

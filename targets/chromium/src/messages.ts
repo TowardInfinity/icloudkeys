@@ -26,6 +26,7 @@ export type ContentRequest =
   | { type: "inlineFillCode"; id: number }
   | { type: "offerSave"; username: string; password: string; isNew: boolean }
   | { type: "openPopup" }
+  | { type: "inlineLaunch" }
   | { type: "hmeCreate" };
 
 export type Request = UiRequest | ContentRequest;

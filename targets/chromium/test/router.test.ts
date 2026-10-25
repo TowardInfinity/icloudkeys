@@ -210,3 +210,14 @@ describe("popup", () => {
     expect(await handle({ type: "logins" }, { ...popup, tab: { id: 5, url: POPUP } })).toMatchObject({ ok: true });
   });
 });
+
+describe("Open Passwords App from a page", () => {
+  it("searches for the asking frame's own page, whatever the message says", async () => {
+    const { handle, client } = await setup();
+    const launch = vi.spyOn(client, "launchPasswordsApp");
+    await handle({ type: "inlineLaunch", searchUrl: "https://evil.example/" } as any, page("https://example.com/login"));
+    expect(launch).toHaveBeenCalledWith({ searchUrl: "https://example.com/login" });
+    expect(await handle({ type: "inlineLaunch" }, page("http://example.com/"))).toMatchObject({ ok: false });
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+});

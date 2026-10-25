@@ -15,7 +15,7 @@ import {
   isVisible,
   setFieldValue,
 } from "@icloudkeys/classifier";
-import { alphanumericPassword, strongPassword } from "@icloudkeys/core";
+import { alphanumericPasswordFor, strongPasswordFor, type Login } from "@icloudkeys/core";
 import { Dropdown, type Row } from "./dropdown.ts";
 import type { ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
 import { NAME } from "./name.ts";
@@ -35,66 +35,128 @@ const send = (req: ContentRequest): Promise<Response | undefined> =>
 
 function lockedRows(res: Response | undefined): Row[] | null {
   if (res?.status.state !== "needs_pin") return null;
-  return [{ label: `Unlock ${NAME}`, detail: `Or click the ${NAME} toolbar icon`, onPick: () => void send({ type: "openPopup" }) }];
+  return [
+    {
+      label: "Enable Password AutoFill",
+      detail: `Click here to allow ${NAME} to AutoFill your passwords.`,
+      icon: "lock",
+      onPick: () => void send({ type: "openPopup" }),
+    },
+  ];
 }
+
+/** What the focused field was offered, kept so typing can re-filter without asking again. */
+interface Offer {
+  field: HTMLInputElement;
+  isLogin: boolean;
+  res: Response | undefined;
+  generated: Row[];
+}
+let offer: Offer | undefined;
 
 async function offerLogins(field: HTMLInputElement, isLogin: boolean): Promise<void> {
   const seq = ++offerSeq;
   const res = await send({ type: isLogin ? "inlineLogins" : "inlineStatus" });
   // focus moved on while the background answered
   if (seq !== offerSeq) return;
-  // what the field is for comes first: a new password, then a new address, then saved logins
-  const rows: Row[] = [];
-  const unlocked = res?.ok === true && res.status.state === "unlocked";
+  offer = { field, isLogin, res, generated: generatedRows(field, res) };
+  render();
+}
+
+function render(): void {
+  if (!offer) return;
+  const rows = rowsFor(offer);
+  if (rows.length) dropdown.show(offer.field, rows);
+  else dropdown.close();
+}
+
+function generatedRows(field: HTMLInputElement, res: Response | undefined): Row[] {
   // while locked a save would be dropped, leaving the account with a password nothing stored
-  if (unlocked && isNewPasswordField(field)) {
-    for (const [label, make] of [
-      ["Use strong password", strongPassword],
-      ["Use password without special characters", alphanumericPassword],
-    ] as const) {
-      const password = make();
-      rows.push({
-        label,
-        detail: password,
-        onPick: () => {
-          fillNewPassword(field, password);
-          lastGenerated = { password, at: Date.now() };
-        },
-      });
+  if (!(res?.ok && res.status.state === "unlocked" && isNewPasswordField(field))) return [];
+  const rules = { passwordrules: field.getAttribute("passwordrules"), minLength: field.minLength, maxLength: field.maxLength };
+  const rows: Row[] = [];
+  for (const [label, make] of [
+    ["Use Strong Password", strongPasswordFor],
+    ["Use Password Without Special Characters", alphanumericPasswordFor],
+  ] as const) {
+    let password: string | null;
+    try {
+      password = make(rules);
+    } catch {
+      // rules no password can meet; the user types their own
+      password = null;
     }
+    if (!password) continue;
+    rows.push({
+      label,
+      detail: password,
+      icon: "lock",
+      onPick: () => {
+        fillNewPassword(field, password);
+        lastGenerated = { password, at: Date.now() };
+      },
+    });
   }
-  if (!field.value && isEmailField(field)) {
+  return rows;
+}
+
+// a typed "ali" finds alice@example.com, and so does "alice@"
+function matches(username: string, typed: string): boolean {
+  const u = username.toLowerCase();
+  return u.startsWith(typed) || u.split("@")[0]!.startsWith(typed);
+}
+
+const siteOf = (login: Login) => (login.sites[0] ?? location.hostname).replace(/^(www|m)\./, "");
+
+function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
+  const typed = field.value.trim().toLowerCase();
+  // what the field is for comes first: a new password, then a new address, then saved logins
+  const rows: Row[] = [...generated];
+  if (!typed && isEmailField(field)) {
     if (res?.status.canHideEmail) rows.push(aliasRow(field));
     // otherwise the feature is invisible and nothing says why
     else if (res?.status.hmeNeedsSignIn) rows.push(signInRow);
   }
   // an email field that isn't a login's (checkout, newsletter) never gets login rows
-  if (!isLogin) return dropdown.show(field, rows);
-  rows.push(...(lockedRows(res) ?? []));
-  if (unlocked && res?.ok) {
-    for (const login of res.logins ?? []) {
-      rows.push({
-        label: login.username || "(no username)",
-        detail: "Fill login",
-        onPick: () => {
-          loginAnchor = field;
-          void send({ type: "inlineFill", username: login.username }).then((r) => {
-            if (r && !r.ok) console.debug(`${NAME}: fill failed:`, r.error);
-          });
-        },
-      });
-    }
+  if (!isLogin) return rows;
+  const locked = lockedRows(res);
+  if (locked) return [...rows, ...locked];
+  if (!(res?.ok && res.status.state === "unlocked")) return rows;
+  const logins = (res.logins ?? []).filter((l) => !typed || matches(l.username, typed));
+  // typing past every saved login closes the list, as in Safari
+  if (typed && !logins.length && !rows.length) return [];
+  for (const login of logins) {
+    rows.push({
+      label: login.username || "no user name",
+      detail: siteOf(login),
+      icon: "key",
+      onPick: () => {
+        loginAnchor = field;
+        void send({ type: "inlineFill", username: login.username }).then((r) => {
+          if (r && !r.ok) console.debug(`${NAME}: fill failed:`, r.error);
+        });
+      },
+    });
   }
-  dropdown.show(field, rows);
+  rows.push({
+    label: "Open Passwords App",
+    detail: res.logins?.length ? undefined : "Look up and create passwords.",
+    icon: "app",
+    footer: true,
+    onPick: () => void send({ type: "inlineLaunch" }),
+  });
+  return rows;
 }
 
 async function offerCodes(field: HTMLInputElement): Promise<void> {
   const seq = ++offerSeq;
   const res = await send({ type: "inlineCodes" });
   if (seq !== offerSeq || !res?.status.canFillCodes) return;
+  offer = undefined;
   const rows: Row[] = lockedRows(res) ?? [];
   for (const c of res.ok ? (res.codes ?? []) : []) {
     rows.push({
+      icon: "code",
       label: c.source === "totp" ? `Verification code${c.username ? ` for ${c.username}` : ""}` : "Code from Messages",
       detail: c.domain || undefined,
       onPick: () => {
@@ -108,6 +170,7 @@ async function offerCodes(field: HTMLInputElement): Promise<void> {
 
 const signInRow: Row = {
   label: "Hide My Email",
+  icon: "mail",
   detail: "Sign in to iCloud.com in this browser to use it",
   onPick: () => void window.open("https://www.icloud.com/", "_blank", "noopener"),
 };
@@ -116,6 +179,7 @@ function aliasRow(field: HTMLInputElement): Row {
   return {
     label: "Hide My Email",
     detail: "Create a new iCloud address for this site",
+    icon: "mail",
     onPick: async () => {
       const res = await send({ type: "hmeCreate" });
       if (!res?.ok || !res.address) {
@@ -127,6 +191,21 @@ function aliasRow(field: HTMLInputElement): Row {
   };
 }
 
+function consider(field: EventTarget | null): void {
+  const kind = classifyFocus(field);
+  if (kind === "otp") {
+    codeAnchor = field as HTMLInputElement;
+    void offerCodes(codeAnchor);
+  } else if (kind === "login" || (frameIsSafe() && isEmailField(field))) {
+    if (kind === "login") loginAnchor = field as HTMLInputElement;
+    void offerLogins(field as HTMLInputElement, kind === "login");
+  } else {
+    offerSeq++;
+    offer = undefined;
+    dropdown.close();
+  }
+}
+
 document.addEventListener(
   "focusin",
   (e) => {
@@ -134,17 +213,46 @@ document.addEventListener(
     // focus inside a shadow root retargets to the host; composedPath has the real input
     const field = e.composedPath()[0] ?? e.target;
     if (field === dropdown.field) return;
-    const kind = classifyFocus(field);
-    if (kind === "otp") {
-      codeAnchor = field as HTMLInputElement;
-      void offerCodes(codeAnchor);
-    } else if (kind === "login" || (frameIsSafe() && isEmailField(field))) {
-      if (kind === "login") loginAnchor = field as HTMLInputElement;
-      void offerLogins(field as HTMLInputElement, kind === "login");
-    } else {
-      offerSeq++;
-      dropdown.close();
-    }
+    consider(field);
+  },
+  true,
+);
+// a click on the focused field brings back a list closed with Escape or a click elsewhere
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    const field = e.composedPath()[0];
+    if (e.isTrusted && !dropdown.open && field instanceof HTMLInputElement && field === deepActive()) consider(field);
+  },
+  true,
+);
+
+function deepActive(): Element | null {
+  let el = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el;
+}
+
+// a field focused before we loaded (autofocus, a dialog's first input) gets no focusin
+if (document.hasFocus()) consider(deepActive());
+
+document.addEventListener(
+  "input",
+  (e) => {
+    if (!e.isTrusted || !offer || e.composedPath()[0] !== offer.field) return;
+    // the list covers what's being typed into a password or code field
+    if (isPasswordField(offer.field) || isOtpField(offer.field)) return dropdown.close();
+    render();
+  },
+  true,
+);
+document.addEventListener(
+  "keydown",
+  (e) => {
+    // ArrowDown brings back a list closed with Escape
+    if (!e.isTrusted || e.key !== "ArrowDown" || dropdown.open || !offer || e.composedPath()[0] !== offer.field) return;
+    render();
+    if (dropdown.open) e.preventDefault();
   },
   true,
 );

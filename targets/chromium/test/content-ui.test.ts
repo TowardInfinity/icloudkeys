@@ -26,6 +26,14 @@ const PAGES: Record<string, string> = {
       <button type="submit">Place order</button></form>`,
   "/formless": `<div><input id="user" autocomplete="username"><input id="pw" type="password" autocomplete="current-password">
       <button id="go" type="button">Continue</button></div>`,
+  "/modal": `<dialog id="d"><form onsubmit="event.preventDefault()">
+      <input id="user" autocomplete="username"><input id="pw" type="password" autocomplete="current-password">
+      </form></dialog><script>d.showModal()</script>`,
+  "/prefocused": `<form onsubmit="event.preventDefault()"><input id="user" autocomplete="username">
+      <input id="pw" type="password" autocomplete="current-password"></form><script>user.focus()</script>`,
+  "/framed": `<p>outer</p><iframe src="/inner" style="position:absolute;top:300px;left:50px;width:400px;height:120px;border:0"></iframe>`,
+  "/inner": `<form onsubmit="event.preventDefault()"><input id="user" autocomplete="username">
+      <input id="pw" type="password" autocomplete="current-password"></form>`,
   "/otp": `<form onsubmit="event.preventDefault()"><input id="code" autocomplete="one-time-code" inputmode="numeric"></form>`,
 };
 
@@ -40,7 +48,7 @@ const STUB = `(() => {
     sendMessage: async (msg) => {
       window.__sent.push(msg);
       // logins ride along on every reply, so only the content script's own gating keeps them off a field
-      const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: [] }] };
+      const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
       if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
       if (msg.type === "hmeCreate") return { ...base, address: "x7@icloud.com" };
       return base;
@@ -79,6 +87,15 @@ async function open(path: string): Promise<Page> {
 
 const sent = (page: Page) => page.evaluate(() => (window as any).__sent as { type: string; [k: string]: unknown }[]);
 const dropdownShown = (page: Page) => page.evaluate(() => !!document.querySelector("icloudkeys-suggestions"));
+const fills = async (page: Page) => (await sent(page)).filter((m) => m.type === "inlineFill");
+/** The middle of the first row under the header, in page coordinates. */
+const firstRow = (page: Page) =>
+  page.evaluate(() => {
+    const r = document.querySelector("icloudkeys-suggestions")!.getBoundingClientRect();
+    return { x: r.left + 60, y: r.top + 26 + 22 };
+  });
+const hostAt = (page: Page, p: { x: number; y: number }) =>
+  page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.localName, p);
 
 describe("dropdown", () => {
   it("offers logins on focus and fills the picked one by keyboard", async () => {
@@ -171,6 +188,113 @@ describe("dropdown", () => {
   });
 });
 
+describe("like Safari's list", () => {
+  it("filters logins as the user types and closes when none match", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.type("bo");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "bob@example.com" }]);
+    await page.click("#user");
+    await page.keyboard.type("zzz");
+    await expect.poll(() => dropdownShown(page)).toBe(false);
+    await page.close();
+  });
+
+  it("brings the list back on ArrowDown after Escape", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("Escape");
+    expect(await dropdownShown(page)).toBe(false);
+    await page.keyboard.press("ArrowDown");
+    expect(await dropdownShown(page)).toBe(true);
+    await page.close();
+  });
+
+  it("ends a login list with Open Passwords App", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect((await sent(page)).map((m) => m.type)).toContain("inlineLaunch");
+    expect(await fills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("fills on a real click on a row", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const p = await firstRow(page);
+    await page.mouse.click(p.x, p.y);
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "alice" }]);
+    await page.close();
+  });
+
+  it("refuses a click on a list the page has faded out", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const p = await firstRow(page);
+    await page.evaluate(() => document.querySelector<HTMLElement>("icloudkeys-suggestions")!.style.setProperty("opacity", "0.01", "important"));
+    await page.mouse.click(p.x, p.y);
+    expect(await fills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("shows and works over a modal login dialog", async () => {
+    const page = await open("/modal");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const p = await firstRow(page);
+    expect(await hostAt(page, p)).toBe("icloudkeys-suggestions");
+    await page.mouse.click(p.x, p.y);
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "alice" }]);
+    await page.close();
+  });
+
+  it("stays above a popover the page opens later, and closes when a modal takes focus", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const p = await firstRow(page);
+    await page.evaluate(() => {
+      const cover = document.createElement("div");
+      cover.popover = "manual";
+      cover.style.cssText = "inset:0;width:100vw;height:100vh;margin:0;background:red";
+      document.body.append(cover);
+      cover.showPopover();
+    });
+    expect(await hostAt(page, p)).toBe("icloudkeys-suggestions");
+    await page.evaluate(() => {
+      const d = document.createElement("dialog");
+      document.body.append(d);
+      d.showModal();
+    });
+    await expect.poll(() => dropdownShown(page)).toBe(false);
+    await page.close();
+  });
+
+  it("offers on a field focused before the script loaded", async () => {
+    const page = await open("/prefocused");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.close();
+  });
+
+  it("draws a same-origin iframe's list in the top page, under the field", async () => {
+    const page = await open("/framed");
+    await page.frameLocator("iframe").locator("#user").click();
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const top = await page.evaluate(() => document.querySelector("icloudkeys-suggestions")!.getBoundingClientRect().top);
+    expect(top).toBeGreaterThan(300);
+    await page.close();
+  });
+});
+
 describe("not a login", () => {
   it("never offers a login on a checkout email field", async () => {
     const page = await open("/checkout");
@@ -184,6 +308,7 @@ describe("not a login", () => {
     const types = (await sent(page)).map((m) => m.type);
     expect(types).not.toContain("inlineFill");
     expect(types).not.toContain("inlineLogins");
+    expect(types).not.toContain("inlineLaunch");
     await page.close();
   });
 

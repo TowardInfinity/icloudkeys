@@ -39,6 +39,7 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "inlineFillCode",
   "offerSave",
   "openPopup",
+  "inlineLaunch",
   "hmeCreate",
 ]);
 
@@ -250,6 +251,10 @@ export function createRouter(env: RouterEnv) {
         await client.saveLogin(at.tabId, at.host, username, password);
         return { ok: true, status: status() };
       }
+      case "inlineLaunch":
+        // the search is for the asking frame's own page, never a URL the page names
+        client.launchPasswordsApp(at.frameUrls[0] ? { searchUrl: at.frameUrls[0] } : {});
+        return { ok: true, status: status() };
       case "hmeCreate":
         return createAlias(at);
     }
