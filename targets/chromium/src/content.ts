@@ -403,7 +403,8 @@ chrome.runtime.onMessage.addListener((msg: ToContent, sender, sendResponse) => {
   }
   if (msg.type === "signInCheck") {
     // a page that draws its form from script gets a moment to put it back up
-    setTimeout(() => sendResponse({ filled: false, loginShown: loginShown(document) }), SIGN_IN_SETTLE_MS);
+    // a page still watching its own sign-in (a script-driven site changing its URL) settles it itself
+    setTimeout(() => sendResponse({ filled: false, loginShown: loginShown(document), watching: !!stopWatching }), SIGN_IN_SETTLE_MS);
     return true;
   }
   sendResponse(onFill(msg));
@@ -415,6 +416,8 @@ chrome.runtime.onMessage.addListener((msg: ToContent, sender, sendResponse) => {
 // up after the wait, or a password typed again, is a failed attempt and nothing is offered.
 const SIGN_IN_WAIT_MS = 8_000;
 const SIGN_IN_SETTLE_MS = 1_000;
+// script-drawn forms often drop out behind a spinner and come back with an error
+const SIGN_IN_GONE_MS = 1_500;
 let stopWatching: (() => void) | undefined;
 
 function loginShown(root: Document | ShadowRoot): boolean {
@@ -425,15 +428,20 @@ function loginShown(root: Document | ShadowRoot): boolean {
 function watchSignIn(root: Document | ShadowRoot): void {
   stopWatching?.();
   const started = Date.now();
+  let goneSince: number | undefined;
   const settle = (ok: boolean) => {
     stop();
+    // a failed attempt retried with the same password is a new attempt
+    if (!ok) lastSave = { key: "", at: 0 };
     void send({ type: "signInOutcome", ok });
   };
   const retyped = (e: Event) => {
     if (e.isTrusted && e.composedPath()[0] instanceof Element && isPasswordField(e.composedPath()[0] as Element)) settle(false);
   };
   const timer = setInterval(() => {
-    if (!loginShown(root)) settle(true);
+    if (loginShown(root)) goneSince = undefined;
+    else goneSince ??= Date.now();
+    if (goneSince !== undefined && Date.now() - goneSince >= SIGN_IN_GONE_MS) settle(true);
     else if (Date.now() - started > SIGN_IN_WAIT_MS) settle(false);
   }, 250);
   // a navigation under way: the next page answers for it, however long the server takes
@@ -463,9 +471,11 @@ function maybeOfferSave(scope: ParentNode, from: Node): void {
   const key = `${sub.username} ${password}`;
   if (key === lastSave.key && Date.now() - lastSave.at < 15_000) return;
   lastSave = { key, at: Date.now() };
-  // a generated password is offered at once: losing it would lock the user out of the new account
-  void send({ type: "offerSave", username: sub.username, password, isNew: sub.isNew || generated, afterSignIn: !generated });
-  if (!generated) {
+  // only sign-ins wait: a new password (a change form often stays up after it worked) is offered
+  // at once, since losing it would lock the user out of the account
+  const afterSignIn = !generated && !sub.isNew;
+  void send({ type: "offerSave", username: sub.username, password, isNew: sub.isNew || generated, afterSignIn });
+  if (afterSignIn) {
     const root = from.getRootNode();
     watchSignIn(root instanceof ShadowRoot ? root : document);
   }

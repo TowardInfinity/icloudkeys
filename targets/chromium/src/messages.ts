@@ -83,4 +83,6 @@ export interface FillResult {
   error?: string;
   /** The answer to `signInCheck`. */
   loginShown?: boolean;
+  /** The page is still watching the sign-in itself. */
+  watching?: boolean;
 }

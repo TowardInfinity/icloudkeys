@@ -527,7 +527,45 @@ describe("saving", () => {
     await page.waitForTimeout(600);
     expect(await outcomes(page)).toEqual([]);
     await page.evaluate(() => document.querySelector("form")!.remove());
-    await expect.poll(() => outcomes(page)).toEqual([true]);
+    await expect.poll(() => outcomes(page), { timeout: 4_000 }).toEqual([true]);
+    await page.close();
+  });
+
+  it("doesn't take a form that drops out and comes back for a sign-in that worked", async () => {
+    const page = await open("/login");
+    await submitTyped(page);
+    await page.evaluate(() => {
+      const form = document.querySelector("form")!;
+      const parent = form.parentNode!;
+      form.remove();
+      setTimeout(() => parent.prepend(form), 400);
+    });
+    await page.waitForTimeout(2_000);
+    expect(await outcomes(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("offers a typed new password at once", async () => {
+    const page = await open("/signup");
+    await page.fill("#email", "me@example.com");
+    await page.fill("#pw", "typed-new");
+    await page.fill("#pw2", "typed-new");
+    await page.keyboard.press("Escape");
+    await page.click("#go");
+    expect((await sent(page)).filter((m) => m.type === "offerSave")).toEqual([
+      { type: "offerSave", username: "me@example.com", password: "typed-new", isNew: true, afterSignIn: false },
+    ]);
+    await page.close();
+  });
+
+  it("offers again when a failed sign-in is retried with the same password", async () => {
+    const page = await open("/login");
+    await submitTyped(page);
+    await page.fill("#pw", "");
+    await page.type("#pw", "typed-pw");
+    await expect.poll(() => outcomes(page)).toEqual([false]);
+    await page.click("#go");
+    expect((await sent(page)).filter((m) => m.type === "offerSave")).toHaveLength(2);
     await page.close();
   });
 

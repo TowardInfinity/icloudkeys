@@ -340,8 +340,9 @@ export function createRouter(env: RouterEnv) {
     }
     // a newer submit replaced it while we asked
     if (heldSaves.get(tabId) !== held) return;
-    // not one of our pages (or none yet): leave it to the next load or the hold running out
-    if (answers[0]?.loginShown === undefined) return;
+    // not one of our pages (or none yet): leave it to the next load or the hold running out;
+    // the same page, still watching, settles it itself
+    if (answers[0]?.loginShown === undefined || answers.some((a) => a?.watching)) return;
     heldSaves.delete(tabId);
     if (answers.every((a) => !a?.loginShown)) await saveLogin(tabId, held).catch(() => {});
   }

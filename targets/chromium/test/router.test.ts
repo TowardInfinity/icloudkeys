@@ -10,7 +10,9 @@ import { createRouter, webHost, type Sender } from "../src/router.ts";
 const EXT = "pejdijmoenmkgeppbflobdenhhabjlaj";
 const POPUP = `chrome-extension://${EXT}/popup.html`;
 
-async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void; loginShown?: boolean } = {}) {
+async function setup(
+  opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void; loginShown?: boolean; watching?: boolean } = {},
+) {
   const helper = new FakeHelper({
     "example.com": [{ username: "alice", password: "hunter2" }],
     "login.example.com": [{ username: "frame-user", password: "frame-pw" }],
@@ -43,7 +45,7 @@ async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unl
     activeTab: async () => ({ id: 1, url: "https://example.com/login" }),
     sendToFrame: async (tabId, frameId, msg) => {
       sent.push({ tabId, frameId, msg });
-      if (msg.type === "signInCheck") return { filled: false, loginShown: opts.loginShown };
+      if (msg.type === "signInCheck") return { filled: false, loginShown: opts.loginShown, watching: opts.watching };
       return { filled: true };
     },
   });
@@ -175,6 +177,14 @@ describe("saving", () => {
       await handle({ type: "signInOutcome", ok: true }, page());
       expect(helper.saved).toHaveLength(saves);
     }
+  });
+
+  it("leaves a sign-in to the page that's still watching it", async () => {
+    const { handle, helper } = await setup({ loginShown: true, watching: true });
+    await handle(typed, page());
+    await handle.tabLoaded(1);
+    await handle({ type: "signInOutcome", ok: true }, page());
+    expect(helper.saved).toHaveLength(1);
   });
 
   it("drops saves while locked", async () => {
