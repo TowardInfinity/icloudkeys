@@ -381,6 +381,32 @@ describe("like Safari's list", () => {
     await page.close();
   });
 
+  it("stays out of the way of a field we just filled, until asked", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await page.evaluate(() =>
+      (window as any).__deliver({ type: "fill", expectedHost: "127.0.0.1", username: "alice", password: "hunter2" }, { id: "ext" }),
+    );
+    // focus coming back to a filled field, as when the toolbar popup closes after a fill
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.focus("#pw");
+    await page.waitForTimeout(300);
+    expect(await dropdownShown(page)).toBe(false);
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.click("#user");
+    await page.waitForTimeout(300);
+    expect(await dropdownShown(page)).toBe(false);
+    // emptying it asks again
+    await page.fill("#user", "");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.close();
+  });
+
   it("offers on a field focused before the script loaded", async () => {
     const page = await open("/prefocused");
     await expect.poll(() => dropdownShown(page)).toBe(true);

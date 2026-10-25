@@ -52,6 +52,12 @@ const verifies = (page: Page) =>
   page.evaluate(() => ((window as any).__sent as { type: string }[]).filter((m) => m.type === "verify"));
 
 describe("pairing code", () => {
+  it("has no Unlock button; the sixth digit is the submit", async () => {
+    const page = await open();
+    expect(await page.locator("#pin-form button").count()).toBe(0);
+    await page.close();
+  });
+
   it("submits on the sixth digit", async () => {
     const page = await open();
     await page.locator("#pin").pressSequentially("12345");

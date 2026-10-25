@@ -4,46 +4,89 @@
     <meta charset="utf-8" />
     <title>Popup</title>
     <style>
-      :root { color-scheme: light dark; font: 13px -apple-system, system-ui, sans-serif; }
-      body { width: 300px; margin: 0; padding: 12px; }
-      h1 { font-size: 14px; margin: 0 0 8px; }
-      .muted { opacity: 0.7; }
-      .error { color: #d33; }
-      form { display: flex; gap: 6px; }
-      input { flex: 1; font: inherit; padding: 6px; letter-spacing: 0.2em; }
-      button { font: inherit; padding: 6px 10px; cursor: pointer; }
-      ul { list-style: none; margin: 0; padding: 0; }
-      li button { width: 100%; text-align: left; margin-bottom: 4px; }
-      h2 { font-size: 11px; font-weight: 600; opacity: 0.6; margin: 12px 0 4px; text-transform: uppercase; }
-      .actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
-      code { user-select: all; font-size: 14px; }
-      .settings { display: block; margin-top: 12px; font-size: 11px; color: inherit; }
+      :root {
+        color-scheme: light dark;
+        --fg: #1d1d1f; --dim: rgba(0, 0, 0, 0.55); --rule: rgba(0, 0, 0, 0.1);
+        --bg: #f6f6f6; --card: #fff; --hover: rgba(0, 0, 0, 0.05); --accent: #0a84ff; --error: #d70015;
+        font: 13px/1.3 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f5f5f7; --dim: rgba(255, 255, 255, 0.55); --rule: rgba(255, 255, 255, 0.1);
+          --bg: #1e1e20; --card: #2c2c2e; --hover: rgba(255, 255, 255, 0.07); --error: #ff6961;
+        }
+      }
+      body { width: 320px; margin: 0; color: var(--fg); background: var(--bg); user-select: none; }
+      button { font: inherit; color: inherit; }
+      .head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px; }
+      .head img { width: 28px; height: 28px; }
+      .head .names { flex: 1; min-width: 0; }
+      .title { font-size: 14px; font-weight: 600; }
+      .sub { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .icon-btn { border: 0; background: none; padding: 5px; border-radius: 6px; cursor: pointer; color: var(--dim); display: flex; }
+      .icon-btn:hover { background: var(--hover); color: var(--fg); }
+      .icon { flex: none; width: 16px; height: 16px; color: var(--dim); }
+      main { padding: 0 10px 10px; }
+      .message { margin: 2px 4px 10px; color: var(--dim); }
+      .message:empty { display: none; }
+      h2 { margin: 12px 4px 5px; font-size: 11px; font-weight: 600; color: var(--dim); }
+      .list { list-style: none; margin: 0 0 8px; padding: 4px; background: var(--card); border-radius: 10px;
+        box-shadow: 0 0 0 0.5px var(--rule), 0 1px 2px rgba(0, 0, 0, 0.06); }
+      .list:empty { display: none; }
+      .row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 4px 8px;
+        border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
+      .row:hover:not(:disabled), .row:focus-visible { background: var(--accent); color: #fff; outline: none; }
+      .row:hover:not(:disabled) .icon, .row:hover:not(:disabled) .detail,
+      .row:focus-visible .icon, .row:focus-visible .detail { color: rgba(255, 255, 255, 0.85); }
+      .row:disabled { cursor: default; }
+      .row:disabled .label { color: var(--dim); }
+      .text { display: flex; flex-direction: column; min-width: 0; }
+      .label, .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .label { font-size: 13px; }
+      .detail { font-size: 11px; color: var(--dim); }
+      .detail:empty { display: none; }
+      .pin { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 4px 6px; text-align: center; }
+      .pin .icon { width: 28px; height: 28px; }
+      #pin { width: 168px; box-sizing: border-box; padding: 8px 0 8px 0.5em; font: 600 22px ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.5em; text-align: center; color: var(--fg); background: var(--card); border: 1px solid var(--rule);
+        border-radius: 8px; outline: none; }
+      #pin:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25); }
+      .link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 12px; }
+      .value { margin: 4px; padding: 8px 10px; background: var(--card); border-radius: 8px; box-shadow: 0 0 0 0.5px var(--rule); }
+      .value code { display: block; margin-top: 2px; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+      .error { margin: 6px 4px 0; color: var(--error); }
       [hidden] { display: none !important; }
     </style>
   </head>
   <body>
-    <h1 id="title"></h1>
-    <p id="message" class="muted"></p>
-    <form id="pin-form" hidden>
-      <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required />
-      <button type="submit">Unlock</button>
-    </form>
-    <button id="pair" hidden>Show code on Mac</button>
-    <ul id="logins"></ul>
-    <section id="codes-section" hidden>
-      <h2>Verification codes</h2>
-      <ul id="codes"></ul>
-    </section>
-    <p id="shown-code" hidden>Code: <code id="code-value"></code></p>
-    <div class="actions" id="actions" hidden>
-      <button id="open-app">Open in Passwords</button>
-      <button id="new-password" hidden>New password…</button>
-      <button id="hme">Hide My Email</button>
-    </div>
-    <p id="hme-note" class="muted" hidden></p>
-    <p id="alias" hidden>New address: <code id="alias-value"></code></p>
-    <p id="error" class="error" hidden></p>
-    <a href="#" id="settings" class="muted settings">Settings…</a>
+    <header class="head">
+      <img id="logo" alt="" />
+      <div class="names">
+        <div id="title" class="title"></div>
+        <div id="site" class="sub"></div>
+      </div>
+      <button id="settings" class="icon-btn" title="Settings" aria-label="Settings"></button>
+    </header>
+    <main>
+      <p id="message" class="message"></p>
+      <form id="pin-form" class="pin" hidden>
+        <span id="pin-icon"></span>
+        <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••" aria-label="Code" required />
+      </form>
+      <button id="pair" class="link" hidden>Show code on Mac</button>
+      <section id="logins-section" hidden>
+        <h2>Passwords</h2>
+        <ul id="logins" class="list"></ul>
+      </section>
+      <section id="codes-section" hidden>
+        <h2>Verification Codes</h2>
+        <ul id="codes" class="list"></ul>
+      </section>
+      <p id="shown-code" class="value" hidden>Code<code id="code-value"></code></p>
+      <p id="alias" class="value" hidden>New address, copied<code id="alias-value"></code></p>
+      <ul id="actions" class="list" hidden></ul>
+      <p id="error" class="error" hidden></p>
+    </main>
     <script type="module" src="./popup.ts"></script>
   </body>
 </html>

@@ -2,7 +2,9 @@
 // can neither read nor restyle it, sits in the top layer so page dialogs can't cover it, and rows
 // act only on trusted input.
 
-export type Icon = "key" | "lock" | "mail" | "code" | "app" | "refresh";
+import { svg, type Icon } from "./icons.ts";
+
+export { svg, type Icon };
 
 export interface Row {
   label: string;
@@ -12,18 +14,6 @@ export interface Row {
   footer?: boolean;
   onPick(): void;
 }
-
-const ICONS: Record<Icon, string> = {
-  key: '<circle cx="5" cy="8" r="3"/><path d="M8 8h7M12.5 8v3M14.5 8v2"/>',
-  lock: '<rect x="3" y="7" width="10" height="7.5" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
-  mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="m2 4.5 6 4.5 6-4.5"/>',
-  code: '<path d="M4.5 2.5h7a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H8l-3.5 2.5v-2.5a3 3 0 0 1-3-3v-3a3 3 0 0 1 3-3Z"/>',
-  refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/>',
-  app: '<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5"/>',
-};
-
-export const svg = (icon: Icon) =>
-  `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>`;
 
 const CSS = `
 .box {

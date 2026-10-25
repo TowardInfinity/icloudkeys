@@ -130,7 +130,9 @@ function matches(username: string, typed: string): boolean {
 const siteOf = (login: Login) => (login.sites[0] ?? location.hostname).replace(/^(www|m)\./, "");
 
 function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
-  const typed = field.value.trim().toLowerCase();
+  // only a user name narrows the list; a password field holds a secret, not a prefix
+  const value = field.value;
+  const typed = isPasswordField(field) ? "" : value.trim().toLowerCase();
   // what the field is for comes first: a new password, then a new address, then saved logins
   const rows: Row[] = [...generated];
   if (!typed && isEmailField(field)) {
@@ -231,7 +233,8 @@ function aliasFailed(field: HTMLInputElement, res: Response | undefined): void {
   ]);
 }
 
-function consider(field: EventTarget | null): void {
+/** `onFocus`: the field just gained focus, rather than the user asking for the list. */
+function consider(field: EventTarget | null, onFocus = false): void {
   const kind = classifyFocus(field);
   if (!settings.inPageAutoFill) {
     // the toolbar popup still fills next to the field the user picked
@@ -241,6 +244,16 @@ function consider(field: EventTarget | null): void {
   }
   if (kind === "login" && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
   else keyButton.hide();
+  // a filled field (by us, or by the user) doesn't need the list in the way; a click, ArrowDown
+  // or the key button still brings it up
+  if (onFocus && (kind === "login" || kind === "otp") && (field as HTMLInputElement).value !== "") {
+    if (kind === "login") loginAnchor = field as HTMLInputElement;
+    else codeAnchor = field as HTMLInputElement;
+    offerSeq++;
+    offer = undefined;
+    dropdown.close();
+    return;
+  }
   if (kind === "otp") {
     codeAnchor = field as HTMLInputElement;
     void offerCodes(codeAnchor);
@@ -261,7 +274,7 @@ document.addEventListener(
     // focus inside a shadow root retargets to the host; composedPath has the real input
     const field = e.composedPath()[0] ?? e.target;
     if (field === dropdown.field) return;
-    consider(field);
+    consider(field, true);
   },
   true,
 );
@@ -309,12 +322,16 @@ function applySettings(next: typeof settings): void {
 }
 
 // a field focused before we loaded (autofocus, a dialog's first input) gets no focusin
-if (document.hasFocus()) consider(deepActive());
+if (document.hasFocus()) consider(deepActive(), true);
 
 document.addEventListener(
   "input",
   (e) => {
-    if (!e.isTrusted || !offer || e.composedPath()[0] !== offer.field) return;
+    if (!e.isTrusted) return;
+    const field = e.composedPath()[0];
+    // emptying a filled field brings back the list it skipped on focus
+    if (!offer && field instanceof HTMLInputElement && field.value === "" && field === deepActive()) return consider(field);
+    if (!offer || field !== offer.field) return;
     // the list covers what's being typed into a password or code field
     if (isPasswordField(offer.field) || isOtpField(offer.field)) return dropdown.close();
     render();
@@ -324,10 +341,16 @@ document.addEventListener(
 document.addEventListener(
   "keydown",
   (e) => {
-    // ArrowDown brings back a list closed with Escape
-    if (!e.isTrusted || e.key !== "ArrowDown" || dropdown.open || !offer || e.composedPath()[0] !== offer.field) return;
-    render();
-    if (dropdown.open) e.preventDefault();
+    // ArrowDown brings back a list closed with Escape, or one skipped because the field was filled
+    if (!e.isTrusted || e.key !== "ArrowDown" || dropdown.open) return;
+    const field = e.composedPath()[0];
+    if (offer && field === offer.field) {
+      render();
+      if (dropdown.open) e.preventDefault();
+    } else if (settings.inPageAutoFill && field instanceof HTMLInputElement && field === deepActive() && classifyFocus(field)) {
+      e.preventDefault();
+      consider(field);
+    }
   },
   true,
 );
