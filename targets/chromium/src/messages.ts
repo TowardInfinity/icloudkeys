@@ -35,6 +35,8 @@ export interface Status {
   hasChallenge: boolean;
   canFillCodes: boolean;
   canOpenNewPassword: boolean;
+  /** Signed in to iCloud.com with iCloud+, as of the last check. */
+  canHideEmail: boolean;
 }
 
 /** A one-time code as listed: the value stays in the background until it's filled. */

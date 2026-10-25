@@ -3,7 +3,7 @@
 // message body: a page can send anything through its content script.
 
 import { ProtocolError, type FrameTarget, type OneTimeCode, type PasswordsClient } from "@icloudkeys/core";
-import type { HmeClient } from "@icloudkeys/hme";
+import type { HmeClient, HmeSession } from "@icloudkeys/hme";
 import type { CodeRow, ContentRequest, FillResult, Request, Response, Status, ToContent, UiRequest } from "./messages.ts";
 
 export interface Sender {
@@ -46,6 +46,8 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
 const CODE_LIST_TTL_MS = 2 * 60_000;
 // one alias per page per interval, so a page script can't fill the user's alias list
 const HME_COOLDOWN_MS = 10_000;
+// how long an iCloud.com sign-in check holds, so focusing email fields doesn't hammer validate
+const HME_SESSION_TTL_MS = 5 * 60_000;
 
 /** HTTPS, or the loopback and reserved-TLD hosts used for local development. */
 export function webHost(url: string | undefined): string | undefined {
@@ -77,13 +79,23 @@ export function createRouter(env: RouterEnv) {
   const now = () => env.now?.() ?? Date.now();
   const codesByTab = new Map<number, { at: number; entries: OneTimeCode[]; target: FrameTarget }>();
   const hmeAt = new Map<number, number>();
+  let hmeSession: { at: number; value: HmeSession } | undefined;
 
   const status = (): Status => ({
     state: client.state,
     hasChallenge: client.hasChallenge,
     canFillCodes: client.canFillOneTimeCodes,
     canOpenNewPassword: client.canOpenNewPasswordSheet,
+    canHideEmail: hmeSession?.value.available === true,
   });
+
+  async function checkHme(): Promise<HmeSession> {
+    if (!env.hme) return { available: false };
+    if (hmeSession && now() - hmeSession.at < HME_SESSION_TTL_MS) return hmeSession.value;
+    const value = await env.hme.session().catch((): HmeSession => ({ available: false }));
+    hmeSession = { at: now(), value };
+    return value;
+  }
 
   /** The asking frame, for content scripts. */
   function senderFrame(sender: Sender): Where {
@@ -145,7 +157,11 @@ export function createRouter(env: RouterEnv) {
     const last = hmeAt.get(at.tabId) ?? -Infinity;
     if (now() - last < HME_COOLDOWN_MS) throw new Refused("wait a moment before creating another address");
     hmeAt.set(at.tabId, now());
-    const address = await env.hme.generate();
+    const address = await env.hme.generate().catch((e) => {
+      // a failure here usually means the sign-in lapsed; recheck before offering again
+      hmeSession = undefined;
+      throw e;
+    });
     await env.hme.reserve(address, at.host, `Generated through ${env.appName}`);
     return { ok: true, status: status(), address };
   }
@@ -182,16 +198,20 @@ export function createRouter(env: RouterEnv) {
         client.launchPasswordsApp(req.mode === "new" && url ? { newPasswordUrl: url } : url ? { searchUrl: url } : {});
         return { ok: true, status: status() };
       }
-      case "hmeStatus":
-        if (!env.hme) return { ok: true, status: status(), hme: { available: false } };
-        return { ok: true, status: status(), hme: await env.hme.session() };
+      case "hmeStatus": {
+        const hme = await checkHme();
+        return { ok: true, status: status(), hme };
+      }
       case "hmeCreate":
         return createAlias(await activeFrame());
     }
   }
 
   async function content(req: ContentRequest, sender: Sender): Promise<Response> {
-    if (req.type === "inlineStatus") return { ok: true, status: status() };
+    if (req.type === "inlineStatus") {
+      await checkHme();
+      return { ok: true, status: status() };
+    }
     if (req.type === "openPopup") {
       await env.openPopup?.();
       return { ok: true, status: status() };
@@ -199,6 +219,7 @@ export function createRouter(env: RouterEnv) {
     const at = senderFrame(sender);
     switch (req.type) {
       case "inlineLogins":
+        await checkHme();
         if (!client.ready) return { ok: true, status: status(), logins: [] };
         return { ok: true, status: status(), logins: await client.getLoginNames(at.tabId, at.host) };
       case "inlineFill":

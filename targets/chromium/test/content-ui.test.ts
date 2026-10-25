@@ -20,6 +20,12 @@ const PAGES: Record<string, string> = {
       <input id="pw" type="password" name="new" autocomplete="new-password">
       <input id="pw2" type="password" name="confirm" autocomplete="new-password">
       <button id="go" type="submit">Create account</button></form>`,
+  "/checkout": `<form onsubmit="event.preventDefault()">
+      <input id="email" type="email" name="email" autocomplete="email">
+      <input name="address" autocomplete="street-address"><input name="zip" autocomplete="postal-code">
+      <button type="submit">Place order</button></form>`,
+  "/formless": `<div><input id="user" autocomplete="username"><input id="pw" type="password" autocomplete="current-password">
+      <button id="go" type="button">Continue</button></div>`,
   "/otp": `<form onsubmit="event.preventDefault()"><input id="code" autocomplete="one-time-code" inputmode="numeric"></form>`,
 };
 
@@ -28,13 +34,13 @@ const PAGES: Record<string, string> = {
 const STUB = `(() => {
   const listeners = [];
   window.__sent = [];
-  window.__reply = { status: { state: "unlocked", hasChallenge: false, canFillCodes: true, canOpenNewPassword: false } };
+  window.__reply = { status: { state: "unlocked", hasChallenge: false, canFillCodes: true, canOpenNewPassword: false, canHideEmail: true } };
   globalThis.chrome = { runtime: {
     id: "ext",
     sendMessage: async (msg) => {
       window.__sent.push(msg);
-      const base = { ok: true, ...window.__reply };
-      if (msg.type === "inlineLogins") return { ...base, logins: [{ username: "alice", sites: [] }] };
+      // logins ride along on every reply, so only the content script's own gating keeps them off a field
+      const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: [] }] };
       if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
       if (msg.type === "hmeCreate") return { ...base, address: "x7@icloud.com" };
       return base;
@@ -147,7 +153,60 @@ describe("dropdown", () => {
   });
 });
 
+describe("not a login", () => {
+  it("never offers a login on a checkout email field", async () => {
+    const page = await open("/checkout");
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await page.click("#email");
+    }
+    const types = (await sent(page)).map((m) => m.type);
+    expect(types).not.toContain("inlineFill");
+    expect(types).not.toContain("inlineLogins");
+    await page.close();
+  });
+
+  it("offers no alias without an iCloud+ session", async () => {
+    const page = await open("/checkout");
+    await page.evaluate(() => ((window as any).__reply.status.canHideEmail = false));
+    await page.click("#email");
+    await page.waitForTimeout(200);
+    expect(await dropdownShown(page)).toBe(false);
+    await page.close();
+  });
+
+  it("offers no generated password while locked, since it couldn't be saved", async () => {
+    const page = await open("/signup");
+    await page.evaluate(() => ((window as any).__reply.status.state = "needs_pin"));
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await page.click("#pw");
+    }
+    expect(await page.inputValue("#pw")).toBe("");
+    await page.close();
+  });
+});
+
 describe("saving", () => {
+  it("offers a formless login submitted with Enter while the dropdown is open", async () => {
+    const page = await open("/formless");
+    await page.fill("#user", "carol");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.type("typed");
+    await page.keyboard.press("Enter");
+    expect((await sent(page)).filter((m) => m.type === "offerSave")).toEqual([
+      { type: "offerSave", username: "carol", password: "typed", isNew: false },
+    ]);
+    await page.close();
+  });
+
   it("offers a typed login once per submit burst", async () => {
     const page = await open("/login");
     await page.fill("#user", "bob");

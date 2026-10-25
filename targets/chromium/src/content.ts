@@ -38,14 +38,16 @@ function lockedRows(res: Response | undefined): Row[] | null {
   return [{ label: `Unlock ${NAME}`, detail: `Or click the ${NAME} toolbar icon`, onPick: () => void send({ type: "openPopup" }) }];
 }
 
-async function offerLogins(field: HTMLInputElement): Promise<void> {
+async function offerLogins(field: HTMLInputElement, isLogin: boolean): Promise<void> {
   const seq = ++offerSeq;
-  const res = await send({ type: "inlineLogins" });
+  const res = await send({ type: isLogin ? "inlineLogins" : "inlineStatus" });
   // focus moved on while the background answered
   if (seq !== offerSeq) return;
   // what the field is for comes first: a new password, then a new address, then saved logins
   const rows: Row[] = [];
-  if (isNewPasswordField(field)) {
+  const unlocked = res?.ok === true && res.status.state === "unlocked";
+  // while locked a save would be dropped, leaving the account with a password nothing stored
+  if (unlocked && isNewPasswordField(field)) {
     for (const [label, make] of [
       ["Use strong password", strongPassword],
       ["Use password without special characters", alphanumericPassword],
@@ -61,9 +63,11 @@ async function offerLogins(field: HTMLInputElement): Promise<void> {
       });
     }
   }
-  if (isEmailField(field)) rows.push(aliasRow(field));
+  if (res?.status.canHideEmail && !field.value && isEmailField(field)) rows.push(aliasRow(field));
+  // an email field that isn't a login's (checkout, newsletter) never gets login rows
+  if (!isLogin) return dropdown.show(field, rows);
   rows.push(...(lockedRows(res) ?? []));
-  if (res?.ok && res.status.state === "unlocked") {
+  if (unlocked && res?.ok) {
     for (const login of res.logins ?? []) {
       rows.push({
         label: login.username || "(no username)",
@@ -126,7 +130,7 @@ document.addEventListener(
       void offerCodes(codeAnchor);
     } else if (kind === "login" || (frameIsSafe() && isEmailField(field))) {
       if (kind === "login") loginAnchor = field as HTMLInputElement;
-      void offerLogins(field as HTMLInputElement);
+      void offerLogins(field as HTMLInputElement, kind === "login");
     } else {
       offerSeq++;
       dropdown.close();
@@ -203,7 +207,8 @@ document.addEventListener(
 document.addEventListener(
   "keydown",
   (e) => {
-    if (!e.isTrusted || e.key !== "Enter" || dropdown.open) return;
+    // Enter on a picked row is the row's, not a submit
+    if (!e.isTrusted || e.key !== "Enter" || dropdown.selecting) return;
     const t = e.composedPath()[0];
     // formless logins submit from script on Enter, with no submit event
     if (t instanceof HTMLInputElement && (isPasswordField(t) || isUsernameField(t))) maybeOfferSave(t.form ?? document);

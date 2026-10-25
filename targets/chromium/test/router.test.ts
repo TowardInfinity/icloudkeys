@@ -31,7 +31,7 @@ async function setup(opts: { unlocked?: boolean; codes?: boolean } = {}) {
     await client.verifyPin(helper.pin);
   }
   const sent: { tabId: number; frameId: number; msg: ToContent }[] = [];
-  const hme = { session: vi.fn(), generate: vi.fn(async () => "abc@icloud.com"), reserve: vi.fn(async () => ({}) as any) };
+  const hme = { session: vi.fn(async () => ({ available: true })), generate: vi.fn(async () => "abc@icloud.com"), reserve: vi.fn(async () => ({}) as any) };
   const handle = createRouter({
     client,
     hme,
@@ -179,6 +179,19 @@ describe("Hide My Email", () => {
     advance(10_001);
     expect(await handle({ type: "hmeCreate" }, page())).toMatchObject({ ok: true });
     expect(hme.reserve).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Hide My Email availability", () => {
+  it("checks the iCloud.com session once per interval and reports it in status", async () => {
+    const { handle, hme, advance } = await setup();
+    expect(await handle({ type: "inlineStatus" }, page())).toMatchObject({ status: { canHideEmail: true } });
+    await handle({ type: "inlineLogins" }, page());
+    await handle({ type: "hmeStatus" }, popup);
+    expect(hme.session).toHaveBeenCalledTimes(1);
+    advance(5 * 60_000 + 1);
+    hme.session.mockResolvedValueOnce({ available: false, reason: "not-signed-in" } as any);
+    expect(await handle({ type: "inlineStatus" }, page())).toMatchObject({ status: { canHideEmail: false } });
   });
 });
 

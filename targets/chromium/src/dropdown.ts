@@ -42,6 +42,11 @@ export class Dropdown {
     return this.host !== undefined;
   }
 
+  /** A row is highlighted, so Enter picks it. */
+  get selecting(): boolean {
+    return this.active >= 0;
+  }
+
   get field(): HTMLInputElement | undefined {
     return this.anchor;
   }
