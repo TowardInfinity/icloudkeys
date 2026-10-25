@@ -9,8 +9,8 @@ pnpm install && pnpm build
 cd native && cargo run --release -- install   # registers Apple's helper with Brave, Edge, Arc…
 ```
 
-Load `targets/chromium/dist` as an unpacked extension, with Apple's iCloud Passwords
-extension disabled (they share an ID). Click the toolbar icon and enter the code your Mac shows.
+Load `targets/chromium/dist` as an unpacked extension after removing Apple's iCloud
+Passwords extension; they share an ID, and merely disabling Apple's leaves its manifest in place. Click the toolbar icon and enter the code your Mac shows.
 
 ## Develop
 
