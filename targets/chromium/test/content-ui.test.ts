@@ -550,6 +550,27 @@ describe("regressions", () => {
   };
   const bg = (page: Page, sel: string) => page.$eval(sel, (el) => getComputedStyle(el).backgroundColor);
 
+  it("puts the user name in at once, before the helper answers with the password", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    // the stub never delivers the fill, as a helper still looking up the password wouldn't
+    expect([await page.inputValue("#user"), await page.inputValue("#pw")]).toEqual(["alice", ""]);
+    await page.close();
+  });
+
+  it("puts no user name into a password field ahead of the fill", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect([await page.inputValue("#user"), await page.inputValue("#pw")]).toEqual(["", ""]);
+    await page.close();
+  });
+
   it("Enter on Use Strong Password doesn't offer to save before any submit", async () => {
     const page = await open("/signup");
     await page.click("#pw");

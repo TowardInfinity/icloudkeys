@@ -163,6 +163,9 @@ function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
       icon: "key",
       onPick: () => {
         loginAnchor = field;
+        // the helper can take seconds to hand over the password; the user name is already on
+        // screen, so it goes in now and the password follows
+        if (login.username && isUsernameField(field)) setFieldValue(field, login.username);
         void send({ type: "inlineFill", username: login.username }).then((r) => {
           if (r && !r.ok) console.debug(`${NAME}: fill failed:`, r.error);
         });
