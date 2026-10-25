@@ -14,6 +14,9 @@
       button { font: inherit; padding: 6px 10px; cursor: pointer; }
       ul { list-style: none; margin: 0; padding: 0; }
       li button { width: 100%; text-align: left; margin-bottom: 4px; }
+      h2 { font-size: 11px; font-weight: 600; opacity: 0.6; margin: 12px 0 4px; text-transform: uppercase; }
+      .actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+      code { user-select: all; font-size: 14px; }
       [hidden] { display: none !important; }
     </style>
   </head>
@@ -26,6 +29,17 @@
     </form>
     <button id="pair" hidden>Show code on Mac</button>
     <ul id="logins"></ul>
+    <section id="codes-section" hidden>
+      <h2>Verification codes</h2>
+      <ul id="codes"></ul>
+    </section>
+    <p id="shown-code" hidden>Code: <code id="code-value"></code></p>
+    <div class="actions" id="actions" hidden>
+      <button id="open-app">Open in Passwords</button>
+      <button id="new-password" hidden>New password…</button>
+      <button id="hme" hidden>Hide My Email</button>
+    </div>
+    <p id="alias" hidden>New address: <code id="alias-value"></code></p>
     <p id="error" class="error" hidden></p>
     <script type="module" src="./popup.ts"></script>
   </body>

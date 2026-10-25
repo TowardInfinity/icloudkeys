@@ -1,4 +1,4 @@
-import type { Request, Response } from "./messages.ts";
+import type { Response, UiRequest } from "./messages.ts";
 import { NAME } from "./name.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -8,23 +8,46 @@ const pinForm = $<HTMLFormElement>("pin-form");
 const pin = $<HTMLInputElement>("pin");
 const pairBtn = $<HTMLButtonElement>("pair");
 const list = $<HTMLUListElement>("logins");
+const codesSection = $("codes-section");
+const codesList = $<HTMLUListElement>("codes");
+const actions = $("actions");
+const newPasswordBtn = $<HTMLButtonElement>("new-password");
+const hmeBtn = $<HTMLButtonElement>("hme");
 
 $("title").textContent = NAME;
 document.title = NAME;
 
-const send = (req: Request) => chrome.runtime.sendMessage<Request, Response>(req);
+const send = (req: UiRequest) => chrome.runtime.sendMessage<UiRequest, Response>(req);
 
 function showError(text: string | null): void {
   errorEl.hidden = !text;
   errorEl.textContent = text ?? "";
 }
 
+function showValue(id: "shown-code" | "alias", value: string): void {
+  $(id).hidden = false;
+  $(id === "alias" ? "alias-value" : "code-value").textContent = value;
+}
+
+function button(label: string, onClick: () => void): HTMLLIElement {
+  const li = document.createElement("li");
+  const btn = document.createElement("button");
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  li.append(btn);
+  return li;
+}
+
 async function render(res: Response): Promise<void> {
   if (!res.ok) showError(res.error);
-  const { state, hasChallenge } = res.status;
+  const { state, hasChallenge, canOpenNewPassword } = res.status;
   pinForm.hidden = state !== "needs_pin" || !hasChallenge;
   pairBtn.hidden = state !== "needs_pin" || hasChallenge;
+  actions.hidden = state === "no_helper" || state === "disconnected";
+  newPasswordBtn.hidden = !canOpenNewPassword;
   list.replaceChildren();
+  codesList.replaceChildren();
+  codesSection.hidden = true;
 
   if (state === "no_helper") {
     message.textContent =
@@ -35,8 +58,9 @@ async function render(res: Response): Promise<void> {
     message.textContent = hasChallenge ? "Enter the 6-digit code your Mac is showing." : "Locked.";
     if (hasChallenge) pin.focus();
   } else {
-    await renderLogins();
+    await Promise.all([renderLogins(), renderCodes()]);
   }
+  void renderHme();
 }
 
 async function renderLogins(): Promise<void> {
@@ -48,17 +72,36 @@ async function renderLogins(): Promise<void> {
   const logins = res.logins ?? [];
   message.textContent = logins.length ? `Logins for ${res.host}` : `No saved logins for ${res.host}.`;
   for (const login of logins) {
-    const li = document.createElement("li");
-    const btn = document.createElement("button");
-    btn.textContent = login.username || "(no username)";
-    btn.addEventListener("click", async () => {
-      const r = await send({ type: "fill", username: login.username });
-      if (r.ok) window.close();
-      else showError(r.error);
-    });
-    li.append(btn);
-    list.append(li);
+    list.append(
+      button(login.username || "(no username)", async () => {
+        const r = await send({ type: "fill", username: login.username });
+        if (r.ok) window.close();
+        else showError(r.error);
+      }),
+    );
   }
+}
+
+async function renderCodes(): Promise<void> {
+  const res = await send({ type: "codes" });
+  if (!res.ok || !res.codes?.length) return;
+  codesSection.hidden = false;
+  for (const c of res.codes) {
+    const label = c.source === "totp" ? `Code for ${c.username || c.domain}` : `Code from Messages${c.domain ? ` (${c.domain})` : ""}`;
+    codesList.append(
+      button(label, async () => {
+        const r = await send({ type: "fillCode", id: c.id });
+        if (!r.ok) return showError(r.error);
+        if (r.code) showValue("shown-code", r.code);
+        else window.close();
+      }),
+    );
+  }
+}
+
+async function renderHme(): Promise<void> {
+  const res = await send({ type: "hmeStatus" });
+  hmeBtn.hidden = !res.ok || !res.hme?.available;
 }
 
 pairBtn.addEventListener("click", async () => {
@@ -72,6 +115,16 @@ pinForm.addEventListener("submit", async (e) => {
   const res = await send({ type: "verify", pin: pin.value.trim() });
   pin.value = "";
   await render(res);
+});
+
+$("open-app").addEventListener("click", () => void send({ type: "launch", mode: "search" }).then(() => window.close()));
+newPasswordBtn.addEventListener("click", () => void send({ type: "launch", mode: "new" }).then(() => window.close()));
+hmeBtn.addEventListener("click", async () => {
+  showError(null);
+  const res = await send({ type: "hmeCreate" });
+  if (!res.ok || !res.address) return showError(res.ok ? "no address returned" : res.error);
+  showValue("alias", res.address);
+  await navigator.clipboard.writeText(res.address).catch(() => {});
 });
 
 // ask for a code as soon as the popup opens while locked, as Apple's extension does

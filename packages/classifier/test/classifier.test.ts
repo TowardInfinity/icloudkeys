@@ -141,3 +141,69 @@ it("refuses to fill a transparent clickjacking field", async () => {
   expect(filled).toBe(false);
   await p.close();
 });
+
+describe("forms", () => {
+  // each case swaps the body of a served page, so location stays on 127.0.0.1
+  async function withBody<T>(html: string, fn: () => T): Promise<Awaited<T>> {
+    const page = await open("login-standard.html");
+    try {
+      await page.evaluate((html) => void (document.body.innerHTML = html), html);
+      return (await page.evaluate(fn)) as Awaited<T>;
+    } finally {
+      await page.close();
+    }
+  }
+
+  it("collects a sign-in and keeps the username before the password", async () => {
+    const got = await withBody(
+      `<form><input name="q" value="search"><input autocomplete="username" value="alice">
+       <input type="password" value="pw"></form>`,
+      () => (globalThis as any).Classifier.collectSubmitted(document),
+    );
+    expect(got).toEqual({ username: "alice", password: "pw", allPasswords: ["pw"], isNew: false });
+  });
+
+  it("takes the repeated value on a change form, not the current password", async () => {
+    const got = await withBody(
+      `<form><input type="password" value="old"><input type="password" value="new1"><input type="password" value="new1"></form>`,
+      () => (globalThis as any).Classifier.collectSubmitted(document),
+    );
+    expect(got).toMatchObject({ password: "new1", isNew: true });
+  });
+
+  it("won't take a short code as the username", async () => {
+    const got = await withBody(
+      `<form><input name="digit" value="9"><input type="password" value="pw"></form>`,
+      () => (globalThis as any).Classifier.collectSubmitted(document),
+    );
+    expect(got.username).toBe("");
+  });
+
+  it("offers Hide My Email on a sign-up email, never on a sign-in email", async () => {
+    const signUp = await withBody(
+      `<form><input id="e" type="email"><input type="password" autocomplete="new-password"></form>`,
+      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
+    );
+    const signIn = await withBody(
+      `<form><input id="e" type="email"><input type="password" autocomplete="current-password"></form>`,
+      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
+    );
+    const newsletter = await withBody(
+      `<form><input id="e" type="email" name="newsletter"><button>Subscribe</button></form>`,
+      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
+    );
+    expect([signUp, signIn, newsletter]).toEqual([true, false, true]);
+  });
+
+  it("spreads a code across single-character boxes", async () => {
+    const got = await withBody(
+      `<div>${'<input maxlength="1" autocomplete="one-time-code">'.repeat(6)}</div>`,
+      () => {
+        const boxes = Array.from(document.querySelectorAll("input"));
+        (globalThis as any).Classifier.fillOneTimeCode(boxes[0], "12-34 56");
+        return boxes.map((b) => b.value).join("");
+      },
+    );
+    expect(got).toBe("123456");
+  });
+});

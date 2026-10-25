@@ -77,3 +77,20 @@ it("fills a credential pinned to this host", async () => {
   expect(res).toEqual({ filled: true });
   expect(values).toEqual(["alice", "s3cret"]);
 });
+
+it("installs the Hide My Email header rules scoped to itself", async () => {
+  const rules = await sw.evaluate(async () => {
+    // registered from top-level worker code; give it a moment on a cold start
+    for (let i = 0; i < 20; i++) {
+      const r = await chrome.declarativeNetRequest.getSessionRules();
+      if (r.length) return r;
+      await new Promise((ok) => setTimeout(ok, 100));
+    }
+    return [];
+  });
+  expect(rules.map((r) => r.id).sort()).toEqual([1, 2]);
+  for (const r of rules) {
+    expect(r.condition.initiatorDomains).toEqual(["pejdijmoenmkgeppbflobdenhhabjlaj"]);
+    expect(r.condition.tabIds).toEqual([-1]);
+  }
+});

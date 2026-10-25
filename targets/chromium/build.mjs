@@ -45,8 +45,11 @@ const manifest = {
   key,
   background: { service_worker: "background.js", type: "module" },
   action: { default_popup: "popup.html", default_title: NAME },
-  content_scripts: [{ matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle" }],
-  permissions: ["nativeMessaging"],
+  content_scripts: [
+    { matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle", all_frames: true },
+  ],
+  // header rewrites for Hide My Email; scoped to our own requests in packages/hme/src/dnr.ts
+  permissions: ["nativeMessaging", "declarativeNetRequestWithHostAccess"],
   host_permissions: ["http://*/*", "https://*/*"],
 };
 await writeFile(here("./dist/manifest.json"), JSON.stringify(manifest, null, 2) + "\n");

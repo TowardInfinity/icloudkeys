@@ -192,6 +192,8 @@ importers:
 
   packages/core: {}
 
+  packages/hme: {}
+
   targets/chromium:
     dependencies:
       '@icloudkeys/classifier':
@@ -200,6 +202,9 @@ importers:
       '@icloudkeys/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@icloudkeys/hme':
+        specifier: workspace:*
+        version: link:../../packages/hme
 
 packages:
 

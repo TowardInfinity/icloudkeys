@@ -211,7 +211,7 @@ export function classifyFocus(el: EventTarget | null): FieldKind | null {
 }
 
 /** Sets a value so React/Vue-controlled inputs see it, via the native setter plus events. */
-function setValue(el: HTMLInputElement, value: string): void {
+export function setFieldValue(el: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   if (setter) setter.call(el, value);
   else el.value = value;
@@ -257,13 +257,142 @@ export function fillCredentials(username: string, password: string, anchor: HTML
 
   let filled = false;
   if (user) {
-    setValue(user, username);
+    setFieldValue(user, username);
     filled = true;
   }
   if (password && pw) {
-    setValue(pw, password);
+    setFieldValue(pw, password);
     everPassword.add(pw);
     filled = true;
   }
   return filled;
+}
+
+/** A password field that wants a new password: sign-up, change, or reset. */
+export function isNewPasswordField(el: Element): boolean {
+  if (!isPasswordField(el)) return false;
+  const ac = attr(el, "autocomplete");
+  if (ac.includes("current-password")) return false;
+  if (ac.includes("new-password")) return true;
+  const scope = el.form ?? document;
+  if (Array.from(scope.querySelectorAll('input[type="password"]')).filter(isVisible).length >= 2) return true;
+  return Array.from(scope.querySelectorAll("button, input[type=submit], input[type=button]")).some((b) =>
+    /\b(sign[\s-]?up|register|create[\s-]?(your[\s-]?)?account)\b/i.test(b.textContent || (b as HTMLInputElement).value || ""),
+  );
+}
+
+/** An email field where a Hide My Email address makes sense: never a login's username. */
+export function isEmailField(el: EventTarget | null): el is HTMLInputElement {
+  if (!(el instanceof HTMLInputElement) || !isVisible(el) || el.disabled || el.readOnly) return false;
+  const ac = attr(el, "autocomplete");
+  if (ac.includes("username") || ac.includes("webauthn")) return false;
+  if (el.type !== "email" && !ac.split(/\s+/).includes("email")) return false;
+  // a sign-in form's email is a username, and a fresh alias would never match an account
+  return !pageHasVisiblePassword(el) || Array.from((el.form ?? document).querySelectorAll("input")).some(isNewPasswordField);
+}
+
+const SUBMITY_LABEL =
+  /\b(sign[\s-]?in|sign[\s-]?up|log[\s-]?in|register|create[\s-]?account|save|update|reset|confirm|done|set|apply|activate|enroll|finish|proceed|verify|join|change[\s-]?password|continue|next|submit)\b/i;
+// ids and names have no word boundaries ("findpwd", "loginBtn"), so these match bare substrings
+const SUBMITY_ATTR = /pwd|passw|reset|submit|login|signin|confirm|continue|next|done|save|set|apply/i;
+
+/** A control whose click likely submits the form around it, including script-driven buttons. */
+export function isSubmitControl(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName.toLowerCase();
+  const type = attr(el, "type");
+  if ((tag === "button" || tag === "input") && type === "submit") return true;
+  const ids = `${el.getAttribute("name") ?? ""} ${el.id}`;
+  if (tag === "button" && (type === "" || type === "button")) return SUBMITY_LABEL.test(el.textContent ?? "") || SUBMITY_ATTR.test(ids);
+  if (tag === "input" && type === "button") return SUBMITY_LABEL.test((el as HTMLInputElement).value) || SUBMITY_ATTR.test(ids);
+  if (attr(el, "role") === "button" || tag === "a") return SUBMITY_LABEL.test(el.textContent ?? "");
+  return false;
+}
+
+export interface Submitted {
+  username: string;
+  password: string;
+  allPasswords: string[];
+  /** Two password fields or a new-password hint: a sign-up or a change, not a sign-in. */
+  isNew: boolean;
+}
+
+/** The login a form is submitting, or null when there's no password in it. */
+export function collectSubmitted(scope: ParentNode = document): Submitted | null {
+  const inputs = Array.from(scope.querySelectorAll("input"));
+  // a show-password toggle leaves the field type=text at submit
+  const pws = inputs.filter((i) => isPasswordish(i) && i.value);
+  const firstPw = pws[0];
+  if (!firstPw) return null;
+  // with current, new and confirm fields, the repeated value is the new password
+  const counts = new Map<string, number>();
+  for (const p of pws) counts.set(p.value, (counts.get(p.value) ?? 0) + 1);
+  const repeated = [...counts].find(([, n]) => n >= 2)?.[0];
+  const marked = pws.find((p) => attr(p, "autocomplete").includes("new-password"))?.value;
+  const password = repeated ?? marked ?? pws[pws.length - 1]!.value;
+
+  const before = (el: Element) => (el.compareDocumentPosition(firstPw) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  // toggled reset forms can leave a password value in a text field; it's never the username
+  const pwValues = new Set(pws.map((p) => p.value));
+  const usable = (i: HTMLInputElement) => !isPasswordish(i) && !!i.value && !pwValues.has(i.value.trim());
+
+  const strict = inputs.filter((i) => isUsernameField(i) && usable(i));
+  let user = strict.filter(before).at(-1) ?? strict[0];
+  if (!user) {
+    // reject junk so a reset form doesn't save "9" as the name
+    user = inputs
+      .filter((i) => {
+        const v = i.value.trim();
+        if (!usable(i) || isOtpField(i) || isSearchOrComboField(i) || NONLOGIN_HINT.test(attrBlob(i))) return false;
+        if (!["text", "email", "tel", ""].includes(i.type)) return false;
+        if (v.length < 3 || (/^\d+$/.test(v) && v.length < 6)) return false;
+        return before(i);
+      })
+      .at(-1);
+  }
+  const isNew = pws.length >= 2 || inputs.some((p) => isPasswordish(p) && attr(p, "autocomplete").includes("new-password"));
+  return { username: user?.value.trim() ?? "", password, allPasswords: pws.map((p) => p.value), isNew };
+}
+
+/** Puts a generated password into `field` and the empty confirm fields of its form. */
+export function fillNewPassword(field: HTMLInputElement, password: string): void {
+  const targets = new Set([field]);
+  for (const p of Array.from(document.querySelectorAll("input")).filter((i) => isPasswordField(i) && isFillable(i))) {
+    if (!p.value && (!field.form || p.form === field.form)) targets.add(p);
+  }
+  for (const t of targets) {
+    setFieldValue(t, password);
+    everPassword.add(t);
+  }
+}
+
+function otpBoxGroup(el: HTMLInputElement): HTMLInputElement[] | null {
+  const scope = el.form ?? el.closest("div, section, fieldset") ?? document;
+  const inputs = Array.from(scope.querySelectorAll("input")).filter((i) => isVisible(i) && !i.disabled && !i.readOnly);
+  const single = inputs.filter((i) => i.getAttribute("maxlength") === "1");
+  if (single.includes(el) && single.length >= 4) return single;
+  // some sites clamp length in script, but still tag every box one-time-code
+  const tagged = inputs.filter((i) => OTP_AUTOCOMPLETE.test(i.getAttribute("autocomplete") ?? ""));
+  if (tagged.includes(el) && tagged.length >= 4) return tagged;
+  return null;
+}
+
+/** Fills a code into one field, or across a row of single-character boxes starting at `field`. */
+export function fillOneTimeCode(field: HTMLInputElement, code: string): void {
+  const chars = code.replace(/[^A-Za-z0-9]/g, "").split("");
+  const boxes = otpBoxGroup(field);
+  if (!boxes) {
+    setFieldValue(field, chars.join(""));
+    return;
+  }
+  const start = Math.max(0, boxes.indexOf(field));
+  chars.forEach((c, i) => {
+    const box = boxes[start + i];
+    if (!box) return;
+    box.focus();
+    setFieldValue(box, c);
+    // some widgets advance focus on key events rather than input
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: c, bubbles: true }));
+    box.dispatchEvent(new KeyboardEvent("keyup", { key: c, bubbles: true }));
+  });
 }

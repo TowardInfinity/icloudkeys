@@ -1,5 +1,8 @@
-import { HOST_NAME, PasswordsClient, ProtocolError, type HelperPort } from "@icloudkeys/core";
-import type { FillMessage, Request, Response, Status } from "./messages.ts";
+import { HOST_NAME, PasswordsClient, type HelperPort } from "@icloudkeys/core";
+import { HmeClient, dnrRules } from "@icloudkeys/hme";
+import type { FillResult, ToContent } from "./messages.ts";
+import { NAME } from "./name.ts";
+import { createRouter } from "./router.ts";
 
 function connectNative(): HelperPort {
   const port = chrome.runtime.connectNative(HOST_NAME);
@@ -15,60 +18,43 @@ function connectNative(): HelperPort {
   };
 }
 
-// an open native port keeps the service worker alive, so the session survives between popups
+// an open native port keeps the service worker alive, so the session survives between pages
 const client = new PasswordsClient({ connect: connectNative });
 
-const status = (): Status => ({ state: client.state, hasChallenge: client.hasChallenge });
+// session rules are dropped on browser restart, so install them on every worker start
+void chrome.declarativeNetRequest
+  .updateSessionRules({ removeRuleIds: [1, 2], addRules: dnrRules(chrome.runtime.id) as chrome.declarativeNetRequest.Rule[] })
+  .catch((e) => console.warn(`${NAME}: Hide My Email header rules not installed`, e));
 
-/** The hostname of the active tab's top frame, read from the browser, never from a page. */
-async function activeTab(): Promise<{ id: number; host: string }> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id === undefined || !tab.url) throw new Error("no active tab");
-  const url = new URL(tab.url);
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("not a web page");
-  return { id: tab.id, host: url.hostname.toLowerCase() };
-}
+const hme = new HmeClient({
+  // the iCloud session lives in icloud.com cookies, which only go along with credentials
+  fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
+});
 
-async function handle(req: Request): Promise<Response> {
-  await client.connect();
-  switch (req.type) {
-    case "status":
-      return { ok: true, status: status() };
-    case "pair":
-      await client.requestChallenge({ ifNeeded: true });
-      return { ok: true, status: status() };
-    case "verify":
-      await client.verifyPin(req.pin);
-      return { ok: true, status: status() };
-    case "logins": {
-      const tab = await activeTab();
-      return { ok: true, status: status(), host: tab.host, logins: await client.getLoginNames(tab.id, tab.host) };
-    }
-    case "fill": {
-      // the tab may have navigated since the list was shown; query and pin to where it is now
-      const tab = await activeTab();
-      const cred = await client.getPassword(tab.id, tab.host, req.username);
-      if (!cred) throw new Error("login not found for this site");
-      const msg: FillMessage = { type: "fill", expectedHost: tab.host, username: cred.username, password: cred.password };
-      const res = await chrome.tabs.sendMessage(tab.id, msg, { frameId: 0 });
-      if (!res?.filled) throw new Error(res?.error ?? "no login fields to fill on this page");
-      return { ok: true, status: status() };
-    }
-  }
-}
+const handle = createRouter({
+  client,
+  hme,
+  appName: NAME,
+  extensionId: chrome.runtime.id,
+  popupUrl: chrome.runtime.getURL("popup.html"),
+  async activeTab() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab;
+  },
+  async sendToFrame(tabId: number, frameId: number, msg: ToContent) {
+    return chrome.tabs.sendMessage<ToContent, FillResult>(tabId, msg, { frameId });
+  },
+  async openPopup() {
+    await chrome.action.openPopup();
+  },
+});
 
-chrome.runtime.onMessage.addListener((req: Request, sender, sendResponse) => {
-  // only our own popup talks to the background
-  if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("popup.html")) return false;
-  handle(req)
-    .then(sendResponse)
-    .catch((e: unknown) =>
-      sendResponse({
-        ok: false,
-        status: status(),
-        error: e instanceof Error ? e.message : String(e),
-        code: e instanceof ProtocolError ? e.code : undefined,
-      } satisfies Response),
-    );
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  handle(msg, sender).then((res) => {
+    if (res) sendResponse(res);
+  });
   return true;
 });
+
+// pair once at startup so the first focused login field doesn't wait on the helper
+void client.connect().catch(() => {});

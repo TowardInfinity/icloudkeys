@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@icloudkeys/classifier": "workspace:*",
-    "@icloudkeys/core": "workspace:*"
+    "@icloudkeys/core": "workspace:*",
+    "@icloudkeys/hme": "workspace:*"
   }
 }
