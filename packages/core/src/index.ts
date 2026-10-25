@@ -3,6 +3,7 @@ export { SRPSession } from "./srp.ts";
 export {
   alphanumericPassword,
   alphanumericPasswordFor,
+  complexPasswordFor,
   parsePasswordRules,
   strongPassword,
   strongPasswordFor,

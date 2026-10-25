@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   alphanumericPassword,
   alphanumericPasswordFor,
+  complexPasswordFor,
   parsePasswordRules,
   strongPassword,
   strongPasswordFor,
@@ -174,5 +175,30 @@ describe("alphanumericPasswordFor", () => {
       expect(pw).toMatch(/^(?=.*[a-z])(?=.*\d)[a-z0-9]{9}$/);
       expect(pw).not.toMatch(/(.)\1\1/);
     }
+  });
+});
+
+describe("complexPasswordFor", () => {
+  const COMPLEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!#$%&*+\-=?@^_])[a-zA-Z0-9!#$%&*+\-=?@^_]{20}$/;
+
+  it("makes 20 characters with every class, and no look-alikes", () => {
+    for (let i = 0; i < 500; i++) {
+      const pw = complexPasswordFor({})!;
+      expect(pw).toMatch(COMPLEX);
+      expect(pw).not.toMatch(/[lIO0o]/);
+    }
+  });
+
+  it("shrinks to maxLength and keeps to the site's own symbols", () => {
+    for (let i = 0; i < 300; i++) {
+      expect(complexPasswordFor({ maxLength: 12 })!).toMatch(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!#$%&*+\-=?@^_]).{12}$/);
+      const pw = complexPasswordFor({ passwordrules: "required: upper; required: lower; required: digit; allowed: [.~]; max-consecutive: 2" })!;
+      expect(pw).toMatch(/^(?=.*[.~])[a-zA-Z0-9.~]{20}$/);
+      expect(pw).not.toMatch(/(.)\1\1/);
+    }
+  });
+
+  it("returns null when the rules allow no symbol", () => {
+    expect(complexPasswordFor({ passwordrules: "allowed: upper, lower, digit" })).toBeNull();
   });
 });

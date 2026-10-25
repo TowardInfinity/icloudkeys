@@ -18,7 +18,7 @@ export interface Row {
 const CSS = `
 .box {
   --fg: #1d1d1f; --dim: rgba(0,0,0,.55); --band: rgba(100,100,100,.1); --rule: rgba(100,100,100,.14);
-  box-sizing: border-box; min-width: 200px; max-width: 380px; overflow-y: auto; overscroll-behavior: contain;
+  box-sizing: border-box; min-width: 200px; max-width: 380px; display: flex; flex-direction: column; overflow: hidden;
   color: var(--fg); background: rgba(246,246,246,.86);
   -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(0,0,0,.16); border-radius: 8px;
@@ -30,12 +30,14 @@ const CSS = `
   .box { --fg: #f5f5f7; --dim: rgba(255,255,255,.55); --band: rgba(0,0,0,.2); --rule: rgba(255,255,255,.08);
     background: rgba(38,38,40,.86); border-color: rgba(0,0,0,.6); }
 }
-.head { position: sticky; top: 0; display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+/* outside the scroller, so rows never show through it */
+.head { flex: none; display: flex; align-items: center; gap: 6px; padding: 5px 12px;
   font-size: 12px; font-weight: 500; color: var(--dim); background: var(--band); }
 .head .icon { width: 13px; height: 13px; }
 .row { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-height: 44px; padding: 2px 12px;
   border-top: 1px solid var(--rule); cursor: default; }
-.head + .row { border-top: 0; }
+.rows { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.rows > .row:first-child { border-top: 0; }
 .row.footer { min-height: 34px; }
 .icon { flex: none; width: 16px; height: 16px; color: var(--dim); }
 .text { display: flex; flex-direction: column; min-width: 0; }
@@ -143,8 +145,10 @@ export class Dropdown {
     head.className = "head";
     head.innerHTML = svg("key");
     head.append(this.title);
-    box.append(head);
-    rows.forEach((row, i) => box.append(this.rowElement(doc, row, i)));
+    const list = doc.createElement("div");
+    list.className = "rows";
+    rows.forEach((row, i) => list.append(this.rowElement(doc, row, i)));
+    box.append(head, list);
     root.append(style, box);
     this.host = host;
     this.box = box;
@@ -270,8 +274,7 @@ export class Dropdown {
     const down = below >= natural || below >= above;
     box.style.maxHeight = `${Math.max(60, Math.min(MAX_HEIGHT, down ? below : above))}px`;
     const left = Math.min(Math.max(4, r.left), view.innerWidth - box.offsetWidth - 4);
-    host.style.setProperty("left", `${Math.round(Math.max(4, left))}px`, "important");
-    host.style.setProperty("top", `${Math.round(down ? r.bottom + 2 : r.top - box.offsetHeight - 2)}px`, "important");
+    place(host, this.anchor, Math.max(4, left), down ? r.bottom + 2 : r.top - box.offsetHeight - 2);
   }
 
   private onKey(e: KeyboardEvent): void {
@@ -309,6 +312,32 @@ export class Dropdown {
     }
     if (!path.includes(this.anchor as EventTarget)) this.close();
   }
+}
+
+/** Whether the element stays put on screen while the page scrolls (it sits in something fixed or stuck). */
+function heldOnScreen(el: Element): boolean {
+  const view = el.ownerDocument.defaultView!;
+  for (let n: Element | null = el; n; n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host ?? null)) {
+    const p = view.getComputedStyle(n).position;
+    if (p === "fixed" || p === "sticky") return true;
+  }
+  return false;
+}
+
+/**
+ * Puts a host at viewport coordinates `left`/`top` next to `anchor`. For a field that scrolls with
+ * the page the host goes in page coordinates, so the browser scrolls both together; a fixed host
+ * moved from a scroll handler trails the field by a frame and jitters.
+ */
+export function place(host: HTMLElement, anchor: Element, left: number, top: number): void {
+  const view = host.ownerDocument.defaultView!;
+  // a same-origin frame's field is drawn in the top document, and moves with that document's scroll
+  const fixed = anchor.ownerDocument === host.ownerDocument && heldOnScreen(anchor);
+  const dx = fixed ? 0 : view.scrollX;
+  const dy = fixed ? 0 : view.scrollY;
+  host.style.setProperty("position", fixed ? "fixed" : "absolute", "important");
+  host.style.setProperty("left", `${Math.round(left + dx)}px`, "important");
+  host.style.setProperty("top", `${Math.round(top + dy)}px`, "important");
 }
 
 /** Puts a host in the top layer, inside the field's modal dialog if it has one. */

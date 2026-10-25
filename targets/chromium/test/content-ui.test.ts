@@ -49,6 +49,10 @@ const PAGES: Record<string, string> = {
   "/framed": `<p>outer</p><iframe src="/inner" style="position:absolute;top:300px;left:50px;width:400px;height:120px;border:0"></iframe>`,
   "/inner": `<form onsubmit="event.preventDefault()"><input id="user" autocomplete="username">
       <input id="pw" type="password" autocomplete="current-password"></form>`,
+  "/tall": `<form onsubmit="event.preventDefault()" style="margin-top:200px"><input id="user" autocomplete="username">
+      <input id="pw" type="password" autocomplete="current-password"></form><div style="height:3000px"></div>`,
+  "/fixed-bar": `<form onsubmit="event.preventDefault()" style="position:fixed;top:20px;left:20px"><input id="user" autocomplete="username">
+      <input id="pw" type="password" autocomplete="current-password"></form><div style="height:3000px"></div>`,
   "/otp": `<form onsubmit="event.preventDefault()"><input id="code" autocomplete="one-time-code" inputmode="numeric"></form>`,
 };
 
@@ -571,6 +575,19 @@ describe("regressions", () => {
     await page.close();
   });
 
+  it("offers Use Complex Password second, and fills it", async () => {
+    const page = await open("/signup");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const pw = await page.inputValue("#pw");
+    expect(pw).toMatch(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!#$%&*+\-=?@^_])[a-zA-Z0-9!#$%&*+\-=?@^_]{20}$/);
+    expect(await page.inputValue("#pw2")).toBe(pw);
+    await page.close();
+  });
+
   it("Enter on Use Strong Password doesn't offer to save before any submit", async () => {
     const page = await open("/signup");
     await page.click("#pw");
@@ -618,6 +635,38 @@ describe("regressions", () => {
         }),
       )
       .toBe(true);
+    await page.close();
+  });
+
+  // read in the same task as the scroll, before any scroll event could let script move them
+  const gapsAfterScroll = (page: Page) =>
+    page.evaluate(() => {
+      const gaps = () => {
+        const f = document.querySelector("#pw")!.getBoundingClientRect();
+        const l = document.querySelector("icloudkeys-suggestions")!.getBoundingClientRect();
+        const k = document.querySelector("icloudkeys-key")!.getBoundingClientRect();
+        return [Math.round(l.top - f.bottom), Math.round(k.top - f.top)];
+      };
+      const before = gaps();
+      window.scrollBy(0, 150);
+      return [before, gaps()];
+    });
+
+  it("scrolls the list and key button with the page, not a frame behind it", async () => {
+    const page = await open("/tall");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const [before, after] = await gapsAfterScroll(page);
+    expect(after).toEqual(before);
+    await page.close();
+  });
+
+  it("keeps the list on a field in a fixed bar while the page scrolls", async () => {
+    const page = await open("/fixed-bar");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const [before, after] = await gapsAfterScroll(page);
+    expect(after).toEqual(before);
     await page.close();
   });
 

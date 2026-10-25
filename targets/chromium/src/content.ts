@@ -15,7 +15,7 @@ import {
   isVisible,
   setFieldValue,
 } from "@icloudkeys/classifier";
-import { alphanumericPasswordFor, strongPasswordFor, type Login } from "@icloudkeys/core";
+import { alphanumericPasswordFor, complexPasswordFor, strongPasswordFor, type Login } from "@icloudkeys/core";
 import { Dropdown, type Row } from "./dropdown.ts";
 import { KeyButton } from "./keybutton.ts";
 import type { ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
@@ -82,6 +82,7 @@ function generatedRows(field: HTMLInputElement, res: Response | undefined): Row[
   const rows: Row[] = [];
   for (const [label, make] of [
     ["Use Strong Password", strongPasswordFor],
+    ["Use Complex Password", complexPasswordFor],
     ["Use Password Without Special Characters", alphanumericPasswordFor],
   ] as const) {
     let password: string | null;

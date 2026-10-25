@@ -273,3 +273,29 @@ export function alphanumericPasswordFor(field: FieldRules): string | null {
   const length = Math.min(Math.max(15, lo), hi);
   return generate([...required, ...classes], pool, length, rules.maxConsecutive);
 }
+
+// symbols that sign-up forms almost all accept: no quotes, brackets, slashes or space
+const COMPLEX_SYMBOLS = "!#$%&*+-=?@^_";
+
+/**
+ * 20 characters of upper, lower, digits and symbols, at least one of each: about 120 bits, for
+ * users who want more than Apple's format. Null when the rules allow no symbol.
+ */
+export function complexPasswordFor(field: FieldRules): string | null {
+  const rules = parsePasswordRules(field.passwordrules ?? "");
+  const { lo, hi } = bounds(rules, field);
+  const allowed = unique(rules.allowed.map(charsOf).join(""));
+  const within = (set: string) => usable(allowed.filter((c) => set.includes(c)));
+  // a site listing only its own symbols gets those instead
+  const symbols = within(COMPLEX_SYMBOLS).length ? within(COMPLEX_SYMBOLS) : within(SPECIAL);
+  if (!symbols.length) return null;
+  const pool = [...within(UPPER + LOWER + DIGITS), ...symbols];
+  const inPool = (g: string[]) => g.filter((c) => pool.includes(c));
+  const required = rules.required.map((g) => {
+    const chars = usable(unique(g.map(charsOf).join("")));
+    return inPool(chars).length ? inPool(chars) : chars;
+  });
+  const classes = [UPPER, LOWER, DIGITS].map((set) => inPool(within(set))).filter((g) => g.length);
+  const length = Math.min(Math.max(20, lo), hi);
+  return generate([...required, ...classes, symbols], [...pool, ...required.flat()], length, rules.maxConsecutive);
+}

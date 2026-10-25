@@ -1,7 +1,7 @@
 // Safari's AutoFill key: a small button at the right edge of a focused login field that opens
 // the suggestion list. Like the list, it lives in a closed shadow root and acts only on trusted input.
 
-import { HOST_STYLE, mount, svg } from "./dropdown.ts";
+import { HOST_STYLE, mount, place, svg } from "./dropdown.ts";
 
 const SIZE = 22;
 const CSS = `
@@ -65,7 +65,6 @@ export class KeyButton {
     if (!this.host || !this.anchor) return;
     if (!this.anchor.isConnected) return this.hide();
     const r = this.anchor.getBoundingClientRect();
-    this.host.style.setProperty("left", `${Math.round(r.right - SIZE - 6)}px`, "important");
-    this.host.style.setProperty("top", `${Math.round(r.top + (r.height - SIZE) / 2)}px`, "important");
+    place(this.host, this.anchor, r.right - SIZE - 6, r.top + (r.height - SIZE) / 2);
   }
 }
