@@ -48,6 +48,8 @@ const CODE_LIST_TTL_MS = 2 * 60_000;
 const HME_COOLDOWN_MS = 10_000;
 // how long an iCloud.com sign-in check holds, so focusing email fields doesn't hammer validate
 const HME_SESSION_TTL_MS = 5 * 60_000;
+// short when unavailable, so signing in to iCloud.com takes effect on the next field
+const HME_UNAVAILABLE_TTL_MS = 30_000;
 
 /** HTTPS, or the loopback and reserved-TLD hosts used for local development. */
 export function webHost(url: string | undefined): string | undefined {
@@ -91,7 +93,8 @@ export function createRouter(env: RouterEnv) {
 
   async function checkHme(): Promise<HmeSession> {
     if (!env.hme) return { available: false };
-    if (hmeSession && now() - hmeSession.at < HME_SESSION_TTL_MS) return hmeSession.value;
+    const ttl = hmeSession?.value.available ? HME_SESSION_TTL_MS : HME_UNAVAILABLE_TTL_MS;
+    if (hmeSession && now() - hmeSession.at < ttl) return hmeSession.value;
     const value = await env.hme.session().catch((): HmeSession => ({ available: false }));
     hmeSession = { at: now(), value };
     return value;

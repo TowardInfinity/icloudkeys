@@ -99,9 +99,19 @@ async function renderCodes(): Promise<void> {
   }
 }
 
+const HME_REASONS: Record<string, string> = {
+  "not-signed-in": "Hide My Email: sign in to icloud.com in this browser.",
+  "no-icloud-plus": "Hide My Email needs iCloud+.",
+  "rate-limited": "Hide My Email: iCloud is rate-limiting, try again shortly.",
+};
+
 async function renderHme(): Promise<void> {
   const res = await send({ type: "hmeStatus" });
-  hmeBtn.hidden = !res.ok || !res.hme?.available;
+  const available = res.ok && res.hme?.available === true;
+  hmeBtn.disabled = !available;
+  const note = $("hme-note");
+  note.hidden = available;
+  note.textContent = available ? "" : (HME_REASONS[(res.ok && res.hme?.reason) || ""] ?? "Hide My Email is unavailable.");
 }
 
 pairBtn.addEventListener("click", async () => {

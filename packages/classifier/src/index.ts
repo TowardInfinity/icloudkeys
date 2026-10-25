@@ -281,14 +281,36 @@ export function isNewPasswordField(el: Element): boolean {
   );
 }
 
-/** An email field where a Hide My Email address makes sense: never a login's username. */
+const SIGNUP_HINT = /sign[\s_-]?up|register|registration|join|create[\s_-]?(an[\s_-]?|your[\s_-]?)?account|get[\s_-]?started|onboard/i;
+const SIGNIN_HINT = /sign[\s_-]?in|log[\s_-]?in|logon|auth/i;
+
+function buttonText(scope: ParentNode): string {
+  return Array.from(scope.querySelectorAll("button, input[type=submit], [role=button]"))
+    .filter(isVisible)
+    .map((b) => b.textContent || (b as HTMLInputElement).value || "")
+    .join(" ");
+}
+
+function isEmailish(el: HTMLInputElement): boolean {
+  if (el.type === "email" || attr(el, "autocomplete").split(/\s+/).includes("email")) return true;
+  return (el.type === "text" || el.type === "") && /e-?mail/i.test(attrBlob(el));
+}
+
+/**
+ * An email field where a new Hide My Email address makes sense: a sign-up, or a form with no
+ * password at all (newsletter, checkout). Never a sign-in, where a fresh alias matches no account.
+ * Sites often mark a sign-up email autocomplete=username, so that alone doesn't rule one out.
+ */
 export function isEmailField(el: EventTarget | null): el is HTMLInputElement {
-  if (!(el instanceof HTMLInputElement) || !isVisible(el) || el.disabled || el.readOnly) return false;
-  const ac = attr(el, "autocomplete");
-  if (ac.includes("username") || ac.includes("webauthn")) return false;
-  if (el.type !== "email" && !ac.split(/\s+/).includes("email")) return false;
-  // a sign-in form's email is a username, and a fresh alias would never match an account
-  return !pageHasVisiblePassword(el) || Array.from((el.form ?? document).querySelectorAll("input")).some(isNewPasswordField);
+  if (!(el instanceof HTMLInputElement) || !isVisible(el) || el.disabled || el.readOnly || !isEmailish(el)) return false;
+  const scope = el.form ?? document;
+  if (Array.from(scope.querySelectorAll("input")).some(isNewPasswordField)) return true;
+  // strongest first: a sign-in page is often titled "Log in or sign up" and has a "Sign up" button
+  for (const text of [location.pathname + location.search, document.title, buttonText(scope)]) {
+    if (SIGNUP_HINT.test(text)) return true;
+    if (SIGNIN_HINT.test(text)) return false;
+  }
+  return !pageHasVisiblePassword(el);
 }
 
 const SUBMITY_LABEL =

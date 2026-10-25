@@ -1,6 +1,6 @@
 // Builds the unpacked MV3 extension into dist/. Content scripts can't be ES modules, so the
 // content script is a separate IIFE build; the popup and service worker are ES modules.
-import { readFile, writeFile } from "node:fs/promises";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
 
@@ -37,6 +37,9 @@ await build({
   },
 });
 
+await cp(here("./icons"), here("./dist/icons"), { recursive: true });
+const icons = Object.fromEntries([16, 32, 48, 128].map((n) => [n, `icons/icon-${n}.png`]));
+
 const manifest = {
   manifest_version: 3,
   name: NAME,
@@ -44,7 +47,8 @@ const manifest = {
   description: "Apple Passwords (iCloud Keychain) for Chromium browsers on macOS. Not affiliated with Apple.",
   key,
   background: { service_worker: "background.js", type: "module" },
-  action: { default_popup: "popup.html", default_title: NAME },
+  icons,
+  action: { default_popup: "popup.html", default_title: NAME, default_icon: icons },
   content_scripts: [
     { matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle", all_frames: true },
   ],

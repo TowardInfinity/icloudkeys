@@ -144,10 +144,18 @@ it("refuses to fill a transparent clickjacking field", async () => {
 
 describe("forms", () => {
   // each case swaps the body of a served page, so location stays on 127.0.0.1
-  async function withBody<T>(html: string, fn: () => T): Promise<Awaited<T>> {
+  async function withBody<T>(html: string, fn: () => T, path = "/account"): Promise<Awaited<T>> {
     const page = await open("login-standard.html");
     try {
-      await page.evaluate((html) => void (document.body.innerHTML = html), html);
+      await page.evaluate(
+        ({ html, path }) => {
+          // the path and title are part of what's being classified
+          history.replaceState(null, "", path);
+          document.title = path === "/login" ? "Log in or Sign up" : "";
+          document.body.innerHTML = html;
+        },
+        { html, path },
+      );
       return (await page.evaluate(fn)) as Awaited<T>;
     } finally {
       await page.close();
@@ -179,20 +187,21 @@ describe("forms", () => {
     expect(got.username).toBe("");
   });
 
-  it("offers Hide My Email on a sign-up email, never on a sign-in email", async () => {
-    const signUp = await withBody(
-      `<form><input id="e" type="email"><input type="password" autocomplete="new-password"></form>`,
-      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
-    );
-    const signIn = await withBody(
-      `<form><input id="e" type="email"><input type="password" autocomplete="current-password"></form>`,
-      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
-    );
-    const newsletter = await withBody(
-      `<form><input id="e" type="email" name="newsletter"><button>Subscribe</button></form>`,
-      () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")),
-    );
-    expect([signUp, signIn, newsletter]).toEqual([true, false, true]);
+  it.each([
+    // [case, body, path, expected]
+    ["new-password form", `<form><input id="e" type="email"><input type="password" autocomplete="new-password"></form>`, "/account", true],
+    ["sign-in form", `<form><input id="e" type="email"><input type="password" autocomplete="current-password"></form>`, "/account", false],
+    ["newsletter", `<form><input id="e" type="email" name="newsletter"><button>Subscribe</button></form>`, "/blog", true],
+    ["email-first sign-in", `<form><input id="e" type="email"><button>Continue</button></form>`, "/login", false],
+    ["sign-up marked username (Figma, Dropbox)", `<form><input id="e" type="email" autocomplete="username webauthn"><button>Continue</button></form>`, "/signup", true],
+    ["sign-up with a sign-in box on the page (Notion)", `<form><input id="e" type="email" autocomplete="email"><input type="password" autocomplete="current-password"></form>`, "/signup", true],
+    ["text field named for email (LinkedIn)", `<form><input id="e" name="email-address" autocomplete="username"><input type="password" autocomplete="new-password"></form>`, "/signup", true],
+    ["create-account button", `<form><input id="e" type="email"><input type="password"><button>Create account</button></form>`, "/start", true],
+    ["sign-in page with a sign-up button (Dropbox)", `<form><input id="e" type="email" autocomplete="username webauthn"><button>Continue</button></form><button>Sign up</button>`, "/login", false],
+    ["not an email", `<form><input id="e" name="first_name"><input type="password" autocomplete="new-password"></form>`, "/signup", false],
+  ])("Hide My Email offer: %s", async (_, body, path, expected) => {
+    const got = await withBody(body, () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")), path);
+    expect(got).toBe(expected);
   });
 
   it("spreads a code across single-character boxes", async () => {
