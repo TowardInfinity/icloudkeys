@@ -266,8 +266,9 @@ export class Dropdown {
     const { x, y } = this.surface.offset();
     const f = this.anchor.getBoundingClientRect();
     const r = { left: f.left + x, top: f.top + y, bottom: f.bottom + y };
-    box.style.maxHeight = "";
-    const natural = Math.min(box.scrollHeight + 2, MAX_HEIGHT);
+    // measured in place: lifting the max height to measure would snap the rows back to the top
+    const list = box.lastElementChild!;
+    const natural = Math.min(box.offsetHeight - list.clientHeight + list.scrollHeight, MAX_HEIGHT);
     const below = view.innerHeight - r.bottom - 8;
     const above = r.top - 8;
     // below the field like Apple's, unless only above has room for it

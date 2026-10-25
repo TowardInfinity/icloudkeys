@@ -53,6 +53,12 @@ const PAGES: Record<string, string> = {
       <input id="pw" type="password" autocomplete="current-password"></form><div style="height:3000px"></div>`,
   "/fixed-bar": `<form onsubmit="event.preventDefault()" style="position:fixed;top:20px;left:20px"><input id="user" autocomplete="username">
       <input id="pw" type="password" autocomplete="current-password"></form><div style="height:3000px"></div>`,
+  // the list's shadow root opened, so a test can read its scroll position
+  "/many": `<script>const attach = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function (o) { return (this.__root = attach.call(this, { ...o, mode: "open" })); };
+      window.__logins = Array.from({ length: 12 }, (_, i) => ({ username: "user" + i, sites: ["example.com"] }));</script>
+      <form onsubmit="event.preventDefault()"><input id="user" autocomplete="username">
+      <input id="pw" type="password" autocomplete="current-password"></form>`,
   "/otp": `<form onsubmit="event.preventDefault()"><input id="code" autocomplete="one-time-code" inputmode="numeric"></form>`,
 };
 
@@ -67,7 +73,7 @@ const STUB = `(() => {
     sendMessage: async (msg) => {
       window.__sent.push(msg);
       // logins ride along on every reply, so only the content script's own gating keeps them off a field
-      const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
+      const base = { ok: true, ...window.__reply, logins: window.__logins ?? [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
       if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
       if (msg.type === "hmeGenerate" && window.__hmeDelay) await new Promise((r) => setTimeout(r, window.__hmeDelay));
       if (msg.type === "hmeGenerate" && window.__hmeFail) return { ...base, ok: false, error: "wait a moment" };
@@ -651,6 +657,22 @@ describe("regressions", () => {
       window.scrollBy(0, 150);
       return [before, gaps()];
     });
+
+  it("keeps the list where the user scrolled it while it follows the field", async () => {
+    const page = await open("/many");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    const rows = () => page.evaluate(() => (document.querySelector("icloudkeys-suggestions") as any).__root.querySelector(".rows").scrollTop);
+    const r = await page.evaluate(() => document.querySelector("icloudkeys-suggestions")!.getBoundingClientRect());
+    await page.mouse.move(r.left + 60, r.top + 100);
+    await page.mouse.wheel(0, 120);
+    await expect.poll(rows).toBeGreaterThan(0);
+    const scrolled = await rows();
+    // a few rounds of the 100ms tracker
+    await page.waitForTimeout(400);
+    expect(await rows()).toBe(scrolled);
+    await page.close();
+  });
 
   it("scrolls the list and key button with the page, not a frame behind it", async () => {
     const page = await open("/tall");
