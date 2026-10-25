@@ -126,6 +126,10 @@ pinForm.addEventListener("submit", async (e) => {
   pin.value = "";
   await render(res);
 });
+// the sixth digit submits, as Apple's own extension does
+pin.addEventListener("input", () => {
+  if (/^\d{6}$/.test(pin.value.trim())) pinForm.requestSubmit();
+});
 
 $("open-app").addEventListener("click", () => void send({ type: "launch", mode: "search" }).then(() => window.close()));
 newPasswordBtn.addEventListener("click", () => void send({ type: "launch", mode: "new" }).then(() => window.close()));

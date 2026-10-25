@@ -37,6 +37,8 @@ export interface Status {
   canOpenNewPassword: boolean;
   /** Signed in to iCloud.com with iCloud+, as of the last check. */
   canHideEmail: boolean;
+  /** Hide My Email is configured but iCloud.com has no session in this browser. */
+  hmeNeedsSignIn: boolean;
 }
 
 /** A one-time code as listed: the value stays in the background until it's filled. */

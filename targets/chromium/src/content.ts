@@ -63,7 +63,11 @@ async function offerLogins(field: HTMLInputElement, isLogin: boolean): Promise<v
       });
     }
   }
-  if (res?.status.canHideEmail && !field.value && isEmailField(field)) rows.push(aliasRow(field));
+  if (!field.value && isEmailField(field)) {
+    if (res?.status.canHideEmail) rows.push(aliasRow(field));
+    // otherwise the feature is invisible and nothing says why
+    else if (res?.status.hmeNeedsSignIn) rows.push(signInRow);
+  }
   // an email field that isn't a login's (checkout, newsletter) never gets login rows
   if (!isLogin) return dropdown.show(field, rows);
   rows.push(...(lockedRows(res) ?? []));
@@ -101,6 +105,12 @@ async function offerCodes(field: HTMLInputElement): Promise<void> {
   }
   dropdown.show(field, rows);
 }
+
+const signInRow: Row = {
+  label: "Hide My Email",
+  detail: "Sign in to iCloud.com in this browser to use it",
+  onPick: () => void window.open("https://www.icloud.com/", "_blank", "noopener"),
+};
 
 function aliasRow(field: HTMLInputElement): Row {
   return {

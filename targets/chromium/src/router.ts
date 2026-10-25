@@ -89,6 +89,7 @@ export function createRouter(env: RouterEnv) {
     canFillCodes: client.canFillOneTimeCodes,
     canOpenNewPassword: client.canOpenNewPasswordSheet,
     canHideEmail: hmeSession?.value.available === true,
+    hmeNeedsSignIn: hmeSession?.value.reason === "not-signed-in",
   });
 
   async function checkHme(): Promise<HmeSession> {

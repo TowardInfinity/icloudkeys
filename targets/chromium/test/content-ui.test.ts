@@ -142,6 +142,24 @@ describe("dropdown", () => {
     await page.close();
   });
 
+  it("says to sign in to iCloud.com instead of hiding the alias row", async () => {
+    const page = await open("/signup");
+    await page.evaluate(() => {
+      const w = window as any;
+      Object.assign(w.__reply.status, { canHideEmail: false, hmeNeedsSignIn: true });
+      w.__opened = [];
+      w.open = (url: string) => void w.__opened.push(url);
+    });
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => (window as any).__opened)).toEqual(["https://www.icloud.com/"]);
+    expect((await sent(page)).map((m) => m.type)).not.toContain("hmeCreate");
+    expect(await page.inputValue("#email")).toBe("");
+    await page.close();
+  });
+
   it("lists codes on a one-time-code field and picks by id", async () => {
     const page = await open("/otp");
     await page.click("#code");

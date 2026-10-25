@@ -191,7 +191,7 @@ describe("Hide My Email availability", () => {
     expect(hme.session).toHaveBeenCalledTimes(1);
     advance(5 * 60_000 + 1);
     hme.session.mockResolvedValueOnce({ available: false, reason: "not-signed-in" } as any);
-    expect(await handle({ type: "inlineStatus" }, page())).toMatchObject({ status: { canHideEmail: false } });
+    expect(await handle({ type: "inlineStatus" }, page())).toMatchObject({ status: { canHideEmail: false, hmeNeedsSignIn: true } });
     // signing in to iCloud.com shows up within seconds, not minutes
     advance(30_001);
     expect(await handle({ type: "inlineStatus" }, page())).toMatchObject({ status: { canHideEmail: true } });
