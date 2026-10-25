@@ -21,14 +21,22 @@ export const Command = {
   RELOGIN_NEEDED: 10,
   LAUNCH_PASSWORDS_APP: 13,
   GET_CAPABILITIES: 14,
+  /** Unsolicited: a code just arrived, e.g. by Messages. */
+  ONE_TIME_CODE_AVAILABLE: 15,
+  GET_ONE_TIME_CODES: 16,
+  /** Reads the current value right before a fill, so a rotated TOTP is never filled. */
+  DID_FILL_ONE_TIME_CODE: 17,
 } as const;
 
 const QueryId: Record<number, string> = {
   [Command.GET_LOGIN_NAMES_FOR_URL]: "CmdGetLoginNames4URL",
   [Command.GET_PASSWORD_FOR_LOGIN_NAME]: "CmdGetPassword4LoginName",
+  [Command.SET_PASSWORD_FOR_LOGIN_NAME_URL]: "CmdNewAccount4URL",
+  [Command.GET_ONE_TIME_CODES]: "CmdGetOneTimeCodes",
+  [Command.DID_FILL_ONE_TIME_CODE]: "CmdDidFillOneTimeCode",
 };
 
-const Action = { SEARCH: 2, GHOST_SEARCH: 5 } as const;
+const Action = { SEARCH: 2, MAYBE_ADD: 4, GHOST_SEARCH: 5 } as const;
 
 export const QueryStatus = { Success: 0, NoResults: 3 } as const;
 
@@ -71,11 +79,32 @@ export interface Credential extends Login {
   password: string;
 }
 
+export interface OneTimeCode {
+  /** e.g. "totp" or "sms". A TOTP entry may arrive without a code; it is read at fill time. */
+  source: string;
+  username: string;
+  domain: string;
+  code: string;
+}
+
+/** Where a one-time-code query is asked from; the helper matches codes against these URLs. */
+export interface FrameTarget {
+  tabId: number;
+  frameId: number;
+  frameUrls: string[];
+}
+
+export type LaunchTarget =
+  | { searchUrl: string }
+  | { newPasswordUrl: string }
+  | { totpUri: string; totpPageUrl?: string }
+  | Record<string, never>;
+
 export class ProtocolError extends Error {
   /** `challenge_reissued`: the Mac now shows a new code; retyping the old one can never work. */
   constructor(
     message: string,
-    readonly code?: "challenge_reissued" | "incorrect_code",
+    readonly code?: "challenge_reissued" | "incorrect_code" | "timeout",
   ) {
     super(message);
   }
@@ -101,6 +130,7 @@ export class PasswordsClient {
   private session: SRPSession | undefined;
   private readonly waiters = new Map<number, Waiter>();
   private readonly stateListeners = new Set<(s: State) => void>();
+  private readonly codeListeners = new Set<() => void>();
   private challengeAt = 0;
   private challengeGen = 0;
   private challengePending: Promise<boolean> | undefined;
@@ -113,6 +143,24 @@ export class PasswordsClient {
   onStateChange(fn: (s: State) => void): () => void {
     this.stateListeners.add(fn);
     return () => this.stateListeners.delete(fn);
+  }
+
+  /** Fires when the helper announces a new one-time code. */
+  onOneTimeCode(fn: () => void): () => void {
+    this.codeListeners.add(fn);
+    return () => this.codeListeners.delete(fn);
+  }
+
+  get canFillOneTimeCodes(): boolean {
+    return this.capabilities.canFillOneTimeCodes === true;
+  }
+
+  get canOpenNewPasswordSheet(): boolean {
+    return this.capabilities.canOpenPasswordsAppToNewPasswordSheet === true;
+  }
+
+  get canSetUpTotp(): boolean {
+    return this.capabilities.scanForOTPURI === true;
   }
 
   private now(): number {
@@ -144,7 +192,7 @@ export class PasswordsClient {
       if (timeoutMs !== null) {
         w.timer = setTimeout(() => {
           if (this.waiters.get(cmd) === w) this.waiters.delete(cmd);
-          reject(new ProtocolError("timeout waiting for response"));
+          reject(new ProtocolError("timeout waiting for response", "timeout"));
         }, timeoutMs);
       }
       this.waiters.set(cmd, w);
@@ -169,6 +217,13 @@ export class PasswordsClient {
       this.session?.reset();
       this.challengeAt = 0;
       if (this.port) this.setState("needs_pin");
+    }
+    if (msg.cmd === Command.ONE_TIME_CODE_AVAILABLE && !w) {
+      for (const fn of this.codeListeners) {
+        try {
+          fn();
+        } catch {}
+      }
     }
   }
 
@@ -326,19 +381,22 @@ export class PasswordsClient {
     return this.session;
   }
 
-  private async query(cmd: number, tabId: number, hostname: string, body: object, timeoutMs: number | null) {
+  private async query(
+    cmd: number,
+    target: { tabId: number; frameId?: number; hostname?: string },
+    body: object,
+    timeoutMs: number | null,
+  ) {
     const session = this.requireSession();
     const sdata = session.serialize(await session.encrypt(body));
-    const reply = await this.send(
-      cmd,
-      {
-        tabId,
-        frameId: 0,
-        url: hostname,
-        payload: { QID: QueryId[cmd], SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }) },
-      },
-      timeoutMs,
-    );
+    const msg: Record<string, unknown> = {
+      tabId: target.tabId,
+      frameId: target.frameId ?? 0,
+      payload: { QID: QueryId[cmd], SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }) },
+    };
+    // one-time-code queries carry their URLs inside the encrypted body instead
+    if (target.hostname !== undefined) msg.url = target.hostname;
+    const reply = await this.send(cmd, msg, timeoutMs);
     let smsg = reply.payload?.SMSG;
     if (typeof smsg === "string") smsg = JSON.parse(smsg);
     if (smsg?.TID !== session.username) throw new ProtocolError("response for another session");
@@ -353,8 +411,7 @@ export class PasswordsClient {
     return this.withLock(async () => {
       const res = await this.query(
         Command.GET_LOGIN_NAMES_FOR_URL,
-        tabId,
-        hostname,
+        { tabId, hostname },
         { ACT: Action.GHOST_SEARCH, URL: hostname },
         5000,
       );
@@ -371,8 +428,7 @@ export class PasswordsClient {
     return this.withLock(async () => {
       const res = await this.query(
         Command.GET_PASSWORD_FOR_LOGIN_NAME,
-        tabId,
-        hostname,
+        { tabId, hostname },
         { ACT: Action.SEARCH, URL: hostname, USR: username },
         null, // no timeout: the helper may be waiting on Touch ID
       );
@@ -380,6 +436,65 @@ export class PasswordsClient {
       if (!e) return undefined;
       return { username: String(e.USR ?? ""), password: String(e.PWD ?? ""), sites: e.sites ?? [] };
     });
+  }
+
+  /**
+   * Offers a login to the helper, which decides add versus update and shows the Mac's own save
+   * prompt. The reply is an empty ack; whether the user saved is never reported back.
+   */
+  async saveLogin(tabId: number, hostname: string, username: string, password: string): Promise<void> {
+    if (!this.ready) throw new ProtocolError("not unlocked");
+    if (!password) throw new ProtocolError("no password to save");
+    return this.withLock(async () => {
+      const session = this.requireSession();
+      const sdata = session.serialize(
+        await session.encrypt({ ACT: Action.MAYBE_ADD, URL: "", USR: "", PWD: "", NURL: hostname, NUSR: username, NPWD: password }),
+      );
+      const payload = { QID: QueryId[Command.SET_PASSWORD_FOR_LOGIN_NAME_URL], SMSG: JSON.stringify({ TID: session.username, SDATA: sdata }) };
+      try {
+        await this.send(Command.SET_PASSWORD_FOR_LOGIN_NAME_URL, { tabId, frameId: 0, payload }, 3000);
+      } catch (e) {
+        // the confirmation lives in the native prompt, so a slow ack is not a failure
+        if (!(e instanceof ProtocolError && e.code === "timeout")) throw e;
+      }
+    });
+  }
+
+  /** Codes the helper would offer for these frames. `requiresAuth`: reading one needs Touch ID. */
+  async getOneTimeCodes(target: FrameTarget, username?: string): Promise<{ entries: OneTimeCode[]; requiresAuth: boolean }> {
+    if (!this.ready) throw new ProtocolError("not unlocked");
+    if (!this.canFillOneTimeCodes) return { entries: [], requiresAuth: false };
+    const body: Record<string, unknown> = { ACT: Action.GHOST_SEARCH, TYPE: "oneTimeCodes", frameURLs: target.frameUrls };
+    if (username) body.username = username;
+    return this.withLock(async () => {
+      const res = await this.query(Command.GET_ONE_TIME_CODES, target, body, 8000);
+      return { entries: normalizeCodes(res.Entries), requiresAuth: res.RequiresUserAuthenticationToFill === true };
+    });
+  }
+
+  /** The current value of a code, read at pick time. No timeout: the helper may wait on Touch ID. */
+  async readOneTimeCode(target: FrameTarget, username?: string): Promise<OneTimeCode[]> {
+    if (!this.ready) throw new ProtocolError("not unlocked");
+    const body: Record<string, unknown> = { ACT: Action.SEARCH, TYPE: "oneTimeCodes", frameURLs: target.frameUrls };
+    if (username) body.username = username;
+    return this.withLock(async () => normalizeCodes((await this.query(Command.DID_FILL_ONE_TIME_CODE, target, body, null)).Entries));
+  }
+
+  /** Opens the Passwords app, optionally at a search, the new-password sheet, or TOTP setup. */
+  launchPasswordsApp(target: LaunchTarget = {}): void {
+    if (!this.port) throw new ProtocolError("not connected");
+    const msg: HelperMessage = { cmd: Command.LAUNCH_PASSWORDS_APP };
+    if ("totpUri" in target) {
+      if (!this.canSetUpTotp) throw new ProtocolError("this helper can't set up verification codes");
+      msg.setUpTOTPURI = target.totpUri;
+      if (target.totpPageUrl) msg.setUpTOTPPageURL = target.totpPageUrl;
+    } else if ("newPasswordUrl" in target) {
+      if (!this.canOpenNewPasswordSheet) throw new ProtocolError("this helper can't open the new-password sheet");
+      msg.newPasswordWithSuggestedURL = target.newPasswordUrl;
+    } else if ("searchUrl" in target) {
+      msg.searchQueryURL = target.searchUrl;
+    }
+    this.port.postMessage(msg);
   }
 
   disconnect(): void {
@@ -393,6 +508,17 @@ export class PasswordsClient {
     } catch {}
     this.dropConnection("closed");
   }
+}
+
+function normalizeCodes(entries: unknown): OneTimeCode[] {
+  return (Array.isArray(entries) ? entries : [])
+    .map((e: any) => ({
+      source: String(e?.source ?? ""),
+      username: String(e?.username ?? ""),
+      domain: String(e?.domain ?? ""),
+      code: e?.code != null ? String(e.code) : "",
+    }))
+    .filter((e) => e.code || e.source === "totp");
 }
 
 function jsonToBase64(obj: unknown): string {

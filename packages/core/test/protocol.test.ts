@@ -154,3 +154,86 @@ describe("protocol", () => {
     }
   });
 });
+
+describe("saving and one-time codes", () => {
+  it("offers a login to the helper with MAYBE_ADD", async () => {
+    const { client, helper } = setup();
+    await pair(client, helper);
+    await client.saveLogin(3, "example.com", "carol", "s3cret");
+    expect(helper.saved).toEqual([{ host: "example.com", username: "carol", password: "s3cret" }]);
+    expect(helper.requests.at(-1)).toMatchObject({ ACT: 4, URL: "", USR: "", PWD: "" });
+    expect(helper.received.at(-1)?.payload.QID).toBe("CmdNewAccount4URL");
+  });
+
+  it("treats an unacknowledged save as sent, since the Mac's prompt is still up", async () => {
+    const { client, helper } = setup();
+    await pair(client, helper);
+    helper.slowSave = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const save = client.saveLogin(3, "example.com", "carol", "s3cret");
+      // encryption runs off the fake clock; the timeout is armed only once the request is sent
+      await vi.waitFor(() => expect(helper.saved).toHaveLength(1));
+      await vi.advanceTimersByTimeAsync(3001);
+      await expect(save).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses to save an empty password", async () => {
+    const { client, helper } = setup();
+    await pair(client, helper);
+    await expect(client.saveLogin(3, "example.com", "carol", "")).rejects.toBeInstanceOf(ProtocolError);
+  });
+
+  it("lists no codes when the helper lacks the capability", async () => {
+    const { client, helper } = setup();
+    helper.codes = [{ source: "sms", username: "", domain: "example.com", code: "123456" }];
+    await pair(client, helper);
+    const target = { tabId: 1, frameId: 0, frameUrls: ["https://example.com/"] };
+    expect(await client.getOneTimeCodes(target)).toEqual({ entries: [], requiresAuth: false });
+  });
+
+  it("lists codes, keeping TOTP entries whose value is read at fill time", async () => {
+    const { client, helper } = setup();
+    helper.capabilities = { canFillOneTimeCodes: true };
+    helper.codes = [
+      { source: "sms", username: "", domain: "example.com", code: "123456" },
+      { source: "totp", username: "alice", domain: "example.com", code: "654321" },
+    ];
+    await pair(client, helper);
+    const target = { tabId: 1, frameId: 2, frameUrls: ["https://example.com/"] };
+    const listed = await client.getOneTimeCodes(target, "alice");
+    expect(listed.requiresAuth).toBe(true);
+    expect(listed.entries.map((e) => [e.source, e.code])).toEqual([
+      ["sms", "123456"],
+      ["totp", ""],
+    ]);
+    const sent = helper.received.at(-1)!;
+    expect(sent.frameId).toBe(2);
+    expect(sent.url).toBeUndefined();
+    expect(helper.requests.at(-1)).toMatchObject({ ACT: 5, TYPE: "oneTimeCodes", username: "alice" });
+
+    const read = await client.readOneTimeCode(target, "alice");
+    expect(read.find((e) => e.source === "totp")?.code).toBe("654321");
+  });
+
+  it("notifies listeners of an unsolicited code", async () => {
+    const { client, helper } = setup();
+    await pair(client, helper);
+    const fn = vi.fn();
+    client.onOneTimeCode(fn);
+    helper.push({ cmd: 15 });
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it("gates the launch variants on capabilities", async () => {
+    const { client, helper } = setup();
+    await client.connect();
+    expect(() => client.launchPasswordsApp({ newPasswordUrl: "https://example.com" })).toThrow(ProtocolError);
+    expect(() => client.launchPasswordsApp({ totpUri: "otpauth://totp/x?secret=A" })).toThrow(ProtocolError);
+    client.launchPasswordsApp({ searchUrl: "example.com" });
+    expect(helper.received.at(-1)).toEqual({ cmd: 13, searchQueryURL: "example.com" });
+  });
+});

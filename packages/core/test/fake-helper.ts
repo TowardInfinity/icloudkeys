@@ -36,6 +36,15 @@ export class FakeHelper {
   silent = false;
   /** How many ports the client has opened. */
   connections = 0;
+  capabilities: Record<string, unknown> = {};
+  /** Codes served by GET_ONE_TIME_CODES / DID_FILL_ONE_TIME_CODE. */
+  codes: { source: string; username: string; domain: string; code?: string }[] = [];
+  /** Logins received via MAYBE_ADD. */
+  readonly saved: { host: string; username: string; password: string }[] = [];
+  /** Don't ack saves, like the real helper while its prompt is up. */
+  slowSave = false;
+  /** Decrypted request bodies, for assertions. */
+  readonly requests: any[] = [];
   /** Every message the client sent, for assertions. */
   readonly received: HelperMessage[] = [];
   private onMsg: (m: HelperMessage) => void = () => {};
@@ -81,11 +90,14 @@ export class FakeHelper {
     switch (m.cmd) {
       case 14:
         if (this.silent) return undefined;
-        return { cmd: 14, capabilities: { shouldUseBase64: this.base64, secretSessionVersion: 1 } };
+        return { cmd: 14, capabilities: { shouldUseBase64: this.base64, secretSessionVersion: 1, ...this.capabilities } };
       case 2:
         return m.msg.QID === "m0" ? this.hello(m) : this.verify(m);
       case 4:
       case 5:
+      case 6:
+      case 16:
+      case 17:
         return this.query(m);
     }
     return undefined;
@@ -124,7 +136,7 @@ export class FakeHelper {
     return this.pake(m.cmd, { TID: c.tid, MSG: 3, ErrCode: 0, HAMK: this.ser(hamk) });
   }
 
-  private async query(m: HelperMessage): Promise<HelperMessage> {
+  private async query(m: HelperMessage): Promise<HelperMessage | undefined> {
     if (!this.key) throw new Error("fake helper: query before pairing");
     const smsg = JSON.parse(m.payload.SMSG);
     const data = this.de(smsg.SDATA);
@@ -133,9 +145,17 @@ export class FakeHelper {
     const req = JSON.parse(
       bytesToUtf8(new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, this.key, data.slice(0, -16)))),
     );
+    this.requests.push(req);
     const logins = this.vault[req.URL] ?? [];
     let res: object;
-    if (m.cmd === 4) {
+    if (m.cmd === 6) {
+      this.saved.push({ host: req.NURL, username: req.NUSR, password: req.NPWD });
+      if (this.slowSave) return undefined;
+      res = { STATUS: 0 };
+    } else if (m.cmd === 16 || m.cmd === 17) {
+      const entries = this.codes.map((c) => (m.cmd === 16 && c.source === "totp" ? { ...c, code: undefined } : c));
+      res = entries.length ? { STATUS: 0, Entries: entries, RequiresUserAuthenticationToFill: true } : { STATUS: 3 };
+    } else if (m.cmd === 4) {
       res = logins.length
         ? { STATUS: 0, Entries: logins.map((l) => ({ USR: l.username, sites: [req.URL] })) }
         : { STATUS: 3 };
