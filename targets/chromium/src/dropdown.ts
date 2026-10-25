@@ -157,7 +157,8 @@ export class Dropdown {
     this.position();
     this.shownAt = Date.now();
     this.tracker = setInterval(() => {
-      if (!this.intact()) return this.close();
+      // a page that re-renders long after focus can drop the field from under the list
+      if (!this.intact() || !this.anchor?.isConnected) return this.close();
       if (Date.now() - this.shownAt < TRACK_MS) this.position();
     }, 100);
   }
@@ -210,6 +211,8 @@ export class Dropdown {
       if (!e.isTrusted) return;
       e.preventDefault();
       e.stopPropagation();
+      // this click was the press's own; the next one is the user's
+      this.pressedAt = 0;
       this.pick(i);
     });
     this.rows.push({ el, row });
@@ -285,7 +288,8 @@ export class Dropdown {
     // from nothing selected, up goes to the last row
     else if (e.key === "ArrowUp") this.select(this.active < 0 ? n - 1 : (this.active - 1 + n) % n);
     else if (e.key === "Enter" && this.active >= 0) {
-      e.stopPropagation();
+      // ours alone: not the page's, and not the content script's save-on-Enter listener
+      e.stopImmediatePropagation();
       this.pick(this.active);
     } else return;
     e.preventDefault();

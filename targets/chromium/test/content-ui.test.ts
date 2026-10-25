@@ -26,6 +26,15 @@ const PAGES: Record<string, string> = {
       <input id="pw" type="password" name="new" autocomplete="new-password">
       <input id="pw2" type="password" name="confirm" autocomplete="new-password">
       <button id="go" type="submit">Create account</button></form>`,
+  "/two-step-beside-signup": `<form id="a" onsubmit="event.preventDefault()">
+      <input id="user" name="username" autocomplete="username"><button>Next</button></form>
+    <form id="b" onsubmit="event.preventDefault()">
+      <input id="email" type="email" name="email" autocomplete="email">
+      <input id="newpw" type="password" name="new" autocomplete="new-password"></form>`,
+  "/button": `<form onsubmit="event.preventDefault()">
+      <input id="user" name="username" autocomplete="username">
+      <input id="pw" type="password" name="password" autocomplete="current-password"></form>
+    <button id="other" style="position:absolute;top:300px;left:400px" onclick="window.__clicked=(window.__clicked||0)+1">Other</button>`,
   "/checkout": `<form onsubmit="event.preventDefault()">
       <input id="email" type="email" name="email" autocomplete="email">
       <input name="address" autocomplete="street-address"><input name="zip" autocomplete="postal-code">
@@ -56,8 +65,11 @@ const STUB = `(() => {
       // logins ride along on every reply, so only the content script's own gating keeps them off a field
       const base = { ok: true, ...window.__reply, logins: [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
       if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
-      if (msg.type === "hmeGenerate") return { ...base, address: "x" + window.__sent.filter((m) => m.type === "hmeGenerate").length + "@icloud.com" };
-      if (msg.type === "hmeReserve") return { ...base, address: "x" + window.__sent.filter((m) => m.type === "hmeGenerate").length + "@icloud.com" };
+      if (msg.type === "hmeGenerate" && window.__hmeDelay) await new Promise((r) => setTimeout(r, window.__hmeDelay));
+      if (msg.type === "hmeGenerate" && window.__hmeFail) return { ...base, ok: false, error: "wait a moment" };
+      // like the router, reserve hands out the address last shown, never a refused one
+      if (msg.type === "hmeGenerate") return { ...base, address: (window.__shown = "x" + window.__sent.filter((m) => m.type === "hmeGenerate").length + "@icloud.com") };
+      if (msg.type === "hmeReserve") return { ...base, address: window.__shown };
       return base;
     },
     onMessage: { addListener: (fn) => listeners.push(fn) },
@@ -526,6 +538,118 @@ describe("fills from outside", () => {
     const res = await page.evaluate(() => (window as any).__deliver({ type: "fillCode", expectedHost: "127.0.0.1", code: "123456" }, { id: "ext" }));
     expect(res).toEqual({ filled: true });
     expect(await page.inputValue("#code")).toBe("123456");
+    await page.close();
+  });
+});
+
+// Bugs found by review; each test failed before its fix.
+describe("regressions", () => {
+  const pickStrong = async (page: Page) => {
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+  };
+  const bg = (page: Page, sel: string) => page.$eval(sel, (el) => getComputedStyle(el).backgroundColor);
+
+  it("Enter on Use Strong Password doesn't offer to save before any submit", async () => {
+    const page = await open("/signup");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await pickStrong(page);
+    await page.waitForTimeout(200);
+    expect((await sent(page)).some((m) => m.type === "offerSave")).toBe(false);
+    await page.close();
+  });
+
+  it("a second strong password still clears its highlight on edit", async () => {
+    const page = await open("/signup");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await pickStrong(page);
+    await expect.poll(() => bg(page, "#pw")).toBe("rgb(255, 248, 196)");
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await pickStrong(page);
+    await page.keyboard.type("x");
+    expect(await bg(page, "#pw")).not.toBe("rgb(255, 248, 196)");
+    await page.close();
+  });
+
+  it("closes the list when the page removes the field long after focus", async () => {
+    const page = await open("/login");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.waitForTimeout(5_500);
+    await page.evaluate(() => document.querySelector("form")!.remove());
+    await expect.poll(() => dropdownShown(page)).toBe(false);
+    await page.close();
+  }, 15_000);
+
+  it("keeps the key button on a field that moves", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await page.evaluate(() => ((document.querySelector("#pw") as HTMLElement).style.marginTop = "200px"));
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const k = document.querySelector("icloudkeys-key")!.getBoundingClientRect();
+          const f = document.querySelector("#pw")!.getBoundingClientRect();
+          return Math.abs(k.top + k.height / 2 - (f.top + f.height / 2)) < 2;
+        }),
+      )
+      .toBe(true);
+    await page.close();
+  });
+
+  it("doesn't put a saved password into a sign-up form beside a two-step login", async () => {
+    const page = await open("/two-step-beside-signup");
+    await page.click("#user");
+    const res = await page.evaluate(() =>
+      (window as any).__deliver({ type: "fill", expectedHost: "127.0.0.1", username: "alice", password: "hunter2" }, { id: "ext" }),
+    );
+    expect(res).toEqual({ filled: true });
+    expect([await page.inputValue("#user"), await page.inputValue("#newpw")]).toEqual(["alice", ""]);
+    await page.close();
+  });
+
+  it("lets the click right after picking a row through", async () => {
+    const page = await open("/button");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.mouse.click(...(Object.values(await firstRow(page)) as [number, number]));
+    expect(await fills(page)).toHaveLength(1);
+    await page.click("#other");
+    expect(await page.evaluate(() => (window as any).__clicked)).toBe(1);
+    await page.close();
+  });
+
+  it("drops a Hide My Email address that arrives after in-page AutoFill was turned off", async () => {
+    const page = await open("/signup");
+    await page.evaluate(() => ((window as any).__hmeDelay = 400));
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await page.evaluate(() => (window as any).__setSettings({ inPageAutoFill: false }));
+    await page.waitForTimeout(700);
+    expect(await dropdownShown(page)).toBe(false);
+    await page.close();
+  });
+
+  it("keeps the shown address when a Refresh is refused", async () => {
+    const page = await open("/signup");
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.evaluate(() => ((window as any).__hmeFail = true));
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "hmeGenerate").length).toBe(2);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.inputValue("#email")).toBe("x1@icloud.com");
     await page.close();
   });
 });

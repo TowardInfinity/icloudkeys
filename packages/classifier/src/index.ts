@@ -232,8 +232,10 @@ export function fillCredentials(username: string, password: string, anchor: HTML
   if (anchorForm) {
     const pwInForm = passwords.filter((p) => p.form === anchorForm);
     const userInForm = usernames.filter((u) => u.form === anchorForm);
-    if (pwInForm.length) passwords = pwInForm;
-    if (userInForm.length) usernames = userInForm;
+    // never reach into another form: a two-step login's first page has no password to fill,
+    // and the sign-up form beside it must not get one; only fields outside any form may join
+    passwords = pwInForm.length ? pwInForm : passwords.filter((p) => !p.form);
+    usernames = userInForm.length ? userInForm : usernames.filter((u) => !u.form);
   }
 
   let pw = passwords[0];

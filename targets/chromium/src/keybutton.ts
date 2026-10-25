@@ -14,6 +14,7 @@ button:hover { background: rgba(0,0,0,.08); color: #0a84ff; }
 export class KeyButton {
   private host: HTMLElement | undefined;
   private anchor: HTMLInputElement | undefined;
+  private tracker: ReturnType<typeof setInterval> | undefined;
   private readonly onMove = () => this.position();
 
   constructor(private readonly title: string) {
@@ -45,6 +46,8 @@ export class KeyButton {
     this.anchor = anchor;
     mount(host, anchor);
     this.position();
+    // fields move without a scroll or resize: animated dialogs, layout shifts, late banners
+    this.tracker = setInterval(this.onMove, 100);
   }
 
   get field(): HTMLInputElement | undefined {
@@ -52,6 +55,7 @@ export class KeyButton {
   }
 
   hide(): void {
+    clearInterval(this.tracker);
     this.host?.remove();
     this.host = undefined;
     this.anchor = undefined;

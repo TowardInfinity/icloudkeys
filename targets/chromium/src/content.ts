@@ -108,15 +108,23 @@ function generatedRows(field: HTMLInputElement, res: Response | undefined): Row[
 // Safari's strong-password yellow, until the user edits the password
 const HIGHLIGHT = { "background-color": "#fff8c4", color: "#1d1d1f" };
 
+// per highlighted field: its own style from before the first highlight, and the current listener
+const highlighted = new WeakMap<HTMLInputElement, { saved: (readonly [string, string, string])[]; restore: (e: Event) => void }>();
+
 function highlight(fields: HTMLInputElement[], password: string): void {
   for (const f of fields) {
-    const saved = Object.keys(HIGHLIGHT).map((k) => [k, f.style.getPropertyValue(k), f.style.getPropertyPriority(k)] as const);
+    const prev = highlighted.get(f);
+    // a second pick must not save our own yellow as the field's style
+    if (prev) f.removeEventListener("input", prev.restore, true);
+    const saved = prev?.saved ?? Object.keys(HIGHLIGHT).map((k) => [k, f.style.getPropertyValue(k), f.style.getPropertyPriority(k)] as const);
     for (const [k, v] of Object.entries(HIGHLIGHT)) f.style.setProperty(k, v, "important");
     const restore = (e: Event) => {
       if (!e.isTrusted || f.value === password) return;
       for (const [k, v, prio] of saved) v ? f.style.setProperty(k, v, prio) : f.style.removeProperty(k);
       f.removeEventListener("input", restore, true);
+      highlighted.delete(f);
     };
+    highlighted.set(f, { saved, restore });
     f.addEventListener("input", restore, true);
   }
 }
@@ -174,8 +182,10 @@ function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
 async function offerCodes(field: HTMLInputElement): Promise<void> {
   const seq = ++offerSeq;
   const res = await send({ type: "inlineCodes" });
-  if (seq !== offerSeq || !res?.status.canFillCodes) return;
+  if (seq !== offerSeq) return;
   offer = undefined;
+  // the last field's list must not stay up over this one
+  if (!res?.status.canFillCodes) return dropdown.close();
   const rows: Row[] = lockedRows(res) ?? [];
   for (const c of res.ok ? (res.codes ?? []) : []) {
     rows.push({
@@ -208,23 +218,30 @@ function aliasRow(field: HTMLInputElement): Row {
 }
 
 // as in Safari: show the address with Use and Refresh, and create nothing until Use
-async function offerAlias(field: HTMLInputElement): Promise<void> {
+async function offerAlias(field: HTMLInputElement, shown?: Row[]): Promise<void> {
+  const seq = ++offerSeq;
   const res = await send({ type: "hmeGenerate" });
-  if (!res?.ok || !res.address) return aliasFailed(field, res);
-  const address = res.address;
-  dropdown.show(field, [
+  // focus moved on, or in-page AutoFill was turned off, while iCloud answered
+  if (seq !== offerSeq || !settings.inPageAutoFill) return;
+  if (!res?.ok || !res.address) {
+    // a Refresh too soon after the last keeps the address already on screen
+    return shown ? dropdown.show(field, shown) : aliasFailed(field, res);
+  }
+  const rows: Row[] = [
     {
-      label: address,
+      label: res.address,
       detail: "Use this address, forwarded to your inbox",
       icon: "mail",
       onPick: async () => {
         const used = await send({ type: "hmeReserve" });
         if (!used?.ok || !used.address) return aliasFailed(field, used);
-        if (!field.value) setFieldValue(field, used.address);
+        // the address now exists in iCloud; it goes in even over what was typed meanwhile
+        setFieldValue(field, used.address);
       },
     },
-    { label: "Refresh", detail: "Show a different address", icon: "refresh", footer: true, onPick: () => void offerAlias(field) },
-  ]);
+    { label: "Refresh", detail: "Show a different address", icon: "refresh", footer: true, onPick: () => void offerAlias(field, rows) },
+  ];
+  dropdown.show(field, rows);
 }
 
 function aliasFailed(field: HTMLInputElement, res: Response | undefined): void {
