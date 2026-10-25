@@ -2,3 +2,9 @@
 dist/
 node_modules/
 target/
+
+# private working notes, never committed
+/PLAN.md
+/docs/plans/
+/NOTES.md
+/scratch/
