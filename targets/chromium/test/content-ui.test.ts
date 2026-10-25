@@ -336,7 +336,7 @@ describe("like Safari's list", () => {
       document.body.append(cover);
       cover.showPopover();
     });
-    expect(await hostAt(page, p)).toBe("icloudkeys-suggestions");
+    await expect.poll(() => hostAt(page, p)).toBe("icloudkeys-suggestions");
     await page.evaluate(() => {
       const d = document.createElement("dialog");
       document.body.append(d);

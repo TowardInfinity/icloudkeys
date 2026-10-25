@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "build": "pnpm -r build",
@@ -13,12 +13,12 @@
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
-    "@types/chrome": "0.3.5",
+    "@types/chrome": "0.3.6",
     "@types/node": "26.6.5",
     "esbuild": "0.28.2",
-    "playwright": "1.49.1",
+    "playwright": "1.64.1",
     "typescript": "7.0.2",
-    "vite": "8.3.4",
-    "vitest": "5.0.3"
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   }
 }
