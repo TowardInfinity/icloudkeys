@@ -10,7 +10,7 @@ import { createRouter, webHost, type Sender } from "../src/router.ts";
 const EXT = "pejdijmoenmkgeppbflobdenhhabjlaj";
 const POPUP = `chrome-extension://${EXT}/popup.html`;
 
-async function setup(opts: { unlocked?: boolean; codes?: boolean } = {}) {
+async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void } = {}) {
   const helper = new FakeHelper({
     "example.com": [{ username: "alice", password: "hunter2" }],
     "login.example.com": [{ username: "frame-user", password: "frame-pw" }],
@@ -39,6 +39,7 @@ async function setup(opts: { unlocked?: boolean; codes?: boolean } = {}) {
     extensionId: EXT,
     popupUrl: POPUP,
     now: () => t,
+    setIcon: opts.setIcon,
     activeTab: async () => ({ id: 1, url: "https://example.com/login" }),
     sendToFrame: async (tabId, frameId, msg) => {
       sent.push({ tabId, frameId, msg });
@@ -265,5 +266,25 @@ describe("Open Passwords App from a page", () => {
     expect(launch).toHaveBeenCalledWith({ searchUrl: "https://example.com/login" });
     expect(await handle({ type: "inlineLaunch" }, page("http://example.com/"))).toMatchObject({ ok: false });
     expect(launch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("toolbar icon", () => {
+  it("follows the session: locked, unlocked, then locked again when the helper goes away", async () => {
+    const setIcon = vi.fn();
+    const { client, helper } = await setup({ unlocked: false, setIcon });
+    expect(setIcon.mock.calls).toEqual([[false]]);
+    await client.connect();
+    await client.requestChallenge();
+    await client.verifyPin(helper.pin);
+    expect(setIcon).toHaveBeenLastCalledWith(true);
+    client.disconnect();
+    expect(setIcon).toHaveBeenLastCalledWith(false);
+  });
+
+  it("starts unlocked when the router is made after pairing", async () => {
+    const setIcon = vi.fn();
+    await setup({ setIcon });
+    expect(setIcon.mock.calls).toEqual([[true]]);
   });
 });

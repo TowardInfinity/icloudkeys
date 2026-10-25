@@ -20,11 +20,12 @@ import { Dropdown, type Row } from "./dropdown.ts";
 import { KeyButton } from "./keybutton.ts";
 import type { ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
 import { NAME } from "./name.ts";
+import { DEFAULTS, loadSettings, onSettingsChange } from "./settings.ts";
 
 const dropdown = new Dropdown(NAME);
 const keyButton = new KeyButton(NAME);
-/** Options from the settings page; the defaults hold until storage answers. */
-const settings = { inPageAutoFill: true, keyButton: true };
+// the defaults hold until storage answers, so a field focused at load still gets its list
+let settings = DEFAULTS;
 // the field the user last focused; fills go next to it
 let loginAnchor: HTMLInputElement | null = null;
 let codeAnchor: HTMLInputElement | null = null;
@@ -232,6 +233,12 @@ function aliasFailed(field: HTMLInputElement, res: Response | undefined): void {
 
 function consider(field: EventTarget | null): void {
   const kind = classifyFocus(field);
+  if (!settings.inPageAutoFill) {
+    // the toolbar popup still fills next to the field the user picked
+    if (kind === "login") loginAnchor = field as HTMLInputElement;
+    if (kind === "otp") codeAnchor = field as HTMLInputElement;
+    return;
+  }
   if (kind === "login" && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
   else keyButton.hide();
   if (kind === "otp") {
@@ -286,6 +293,19 @@ function deepActive(): Element | null {
   let el = document.activeElement;
   while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
   return el;
+}
+
+void loadSettings().then(applySettings);
+onSettingsChange(applySettings);
+
+function applySettings(next: typeof settings): void {
+  settings = next;
+  if (!settings.inPageAutoFill) {
+    offerSeq++;
+    offer = undefined;
+    dropdown.close();
+  }
+  if (!settings.inPageAutoFill || !settings.keyButton) keyButton.hide();
 }
 
 // a field focused before we loaded (autofocus, a dialog's first input) gets no focusin

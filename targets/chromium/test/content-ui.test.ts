@@ -11,6 +11,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const CONTENT = fileURLToPath(new URL("../dist/content.js", import.meta.url));
 
 const PAGES: Record<string, string> = {
+  "/two-logins": `<form onsubmit="event.preventDefault()">
+      <input id="user1" name="username" autocomplete="username">
+      <input id="pw1" type="password" name="password" autocomplete="current-password"></form>
+    <form onsubmit="event.preventDefault()">
+      <input id="user2" name="username" autocomplete="username">
+      <input id="pw2" type="password" name="password" autocomplete="current-password"></form>`,
   "/login": `<form action="/done" onsubmit="event.preventDefault()">
       <input id="user" name="username" autocomplete="username">
       <input id="pw" type="password" name="password" autocomplete="current-password">
@@ -56,6 +62,18 @@ const STUB = `(() => {
     },
     onMessage: { addListener: (fn) => listeners.push(fn) },
   } };
+  // stored settings come in the URL hash, so they're there before the content script asks
+  const stored = location.hash ? JSON.parse(decodeURIComponent(location.hash.slice(1))) : {};
+  const changed = [];
+  chrome.storage = {
+    local: { get: async () => ({ ...stored }), set: async () => {} },
+    onChanged: { addListener: (fn) => changed.push(fn) },
+  };
+  window.__setSettings = (patch) => {
+    Object.assign(stored, patch);
+    const changes = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, { newValue: v }]));
+    for (const fn of changed) fn(changes, "local");
+  };
   window.__deliver = (msg, sender) => new Promise((r) => { for (const fn of listeners) fn(msg, sender, r); });
 })();`;
 
@@ -321,6 +339,44 @@ describe("like Safari's list", () => {
     await expect.poll(() => dropdownShown(page)).toBe(true);
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("pw");
     await page.mouse.click(5, 400);
+    expect(await page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(false);
+    await page.close();
+  });
+
+  it("keeps the list and key button away when In-Page AutoFill is off, but still fills from the toolbar", async () => {
+    const page = await open("/two-logins#" + encodeURIComponent(JSON.stringify({ inPageAutoFill: false })));
+    await page.waitForTimeout(100);
+    await page.click("#pw2");
+    await page.waitForTimeout(300);
+    expect(await dropdownShown(page)).toBe(false);
+    expect(await page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(false);
+    await page.keyboard.press("ArrowDown");
+    expect(await dropdownShown(page)).toBe(false);
+    expect((await sent(page)).some((m) => m.type === "inlineLogins")).toBe(false);
+    const res = await page.evaluate(() =>
+      (window as any).__deliver({ type: "fill", expectedHost: "127.0.0.1", username: "alice", password: "hunter2" }, { id: "ext" }),
+    );
+    expect(res).toEqual({ filled: true });
+    // into the form the user focused, not the first one on the page
+    expect([await page.inputValue("#pw1"), await page.inputValue("#pw2")]).toEqual(["", "hunter2"]);
+    await page.close();
+  });
+
+  it("closes an open list when In-Page AutoFill is turned off", async () => {
+    const page = await open("/login");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.evaluate(() => (window as any).__setSettings({ inPageAutoFill: false }));
+    await expect.poll(() => dropdownShown(page)).toBe(false);
+    expect(await page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(false);
+    await page.close();
+  });
+
+  it("leaves the key button out when it is turned off", async () => {
+    const page = await open("/login#" + encodeURIComponent(JSON.stringify({ keyButton: false })));
+    await page.waitForTimeout(100);
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
     expect(await page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(false);
     await page.close();
   });

@@ -28,6 +28,8 @@ export interface RouterEnv {
   sendToFrame(tabId: number, frameId: number, msg: ToContent): Promise<FillResult | undefined>;
   hme?: Pick<HmeClient, "session" | "generate" | "reserve">;
   openPopup?(): Promise<void>;
+  /** Shows the toolbar icon for unlocked (true) or anything else (false). */
+  setIcon?(unlocked: boolean): void;
   now?(): number;
 }
 
@@ -91,6 +93,12 @@ export function createRouter(env: RouterEnv) {
   // the address shown to each tab; a page can only ever reserve the one we generated for it
   const hmePending = new Map<number, { at: number; frameId: number; host: string; address: string }>();
   let hmeSession: { at: number; value: HmeSession } | undefined;
+
+  if (env.setIcon) {
+    const setIcon = env.setIcon;
+    setIcon(client.state === "unlocked");
+    client.onStateChange((s) => setIcon(s === "unlocked"));
+  }
 
   const status = (): Status => ({
     state: client.state,

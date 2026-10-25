@@ -20,7 +20,7 @@ await build({
     emptyOutDir: true,
     target: "chrome120",
     rollupOptions: {
-      input: { popup: here("./src/popup.html"), background: here("./src/background.ts") },
+      input: { popup: here("./src/popup.html"), options: here("./src/options.html"), background: here("./src/background.ts") },
       output: { entryFileNames: "[name].js", chunkFileNames: "[name].js", assetFileNames: "[name][extname]" },
     },
   },
@@ -49,11 +49,14 @@ const manifest = {
   background: { service_worker: "background.js", type: "module" },
   icons,
   action: { default_popup: "popup.html", default_title: NAME, default_icon: icons },
+  options_ui: { page: "options.html", open_in_tab: false },
   content_scripts: [
     { matches: ["http://*/*", "https://*/*"], js: ["content.js"], run_at: "document_idle", all_frames: true },
   ],
   // header rewrites for Hide My Email; scoped to our own requests in packages/hme/src/dnr.ts
-  permissions: ["nativeMessaging", "declarativeNetRequestWithHostAccess"],
+  permissions: ["nativeMessaging", "declarativeNetRequestWithHostAccess", "storage"],
+  // asked for only when the user turns the browser's AutoFill off in settings
+  optional_permissions: ["privacy"],
   host_permissions: ["http://*/*", "https://*/*"],
 };
 await writeFile(here("./dist/manifest.json"), JSON.stringify(manifest, null, 2) + "\n");

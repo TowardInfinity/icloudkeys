@@ -147,3 +147,8 @@ void (async () => {
   if (res.ok && res.status.state === "needs_pin" && !res.status.hasChallenge) res = await send({ type: "pair" });
   await render(res);
 })();
+
+$("settings").addEventListener("click", (e) => {
+  e.preventDefault();
+  void chrome.runtime.openOptionsPage();
+});

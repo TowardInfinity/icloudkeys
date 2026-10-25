@@ -47,6 +47,10 @@ const handle = createRouter({
   async openPopup() {
     await chrome.action.openPopup();
   },
+  setIcon(unlocked) {
+    const variant = unlocked ? "icon" : "icon-locked";
+    void chrome.action.setIcon({ path: { 16: `icons/${variant}-16.png`, 32: `icons/${variant}-32.png` } }).catch(() => {});
+  },
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
