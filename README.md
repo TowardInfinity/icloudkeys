@@ -12,6 +12,8 @@ cd native && cargo run --release -- install   # registers Apple's helper with Br
 Load `targets/chromium/dist` as an unpacked extension after removing Apple's iCloud
 Passwords extension; they share an ID, and merely disabling Apple's leaves its manifest in place. Click the toolbar icon and enter the code your Mac shows.
 
+Hide My Email needs iCloud+ and a sign-in to icloud.com in the same browser.
+
 ## Develop
 
 ```sh
