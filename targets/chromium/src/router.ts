@@ -31,6 +31,7 @@ export interface RouterEnv {
   /** Shows the toolbar icon for unlocked (true) or anything else (false). */
   setIcon?(unlocked: boolean): void;
   now?(): number;
+  sleep?(ms: number): Promise<void>;
 }
 
 const CONTENT_TYPES = new Set<ContentRequest["type"]>([
@@ -40,6 +41,7 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "inlineCodes",
   "inlineFillCode",
   "offerSave",
+  "signInOutcome",
   "openPopup",
   "inlineLaunch",
   "hmeGenerate",
@@ -54,6 +56,8 @@ const HME_COOLDOWN_MS = 10_000;
 const HME_GENERATE_GAP_MS = 2_000;
 // an address shown in the list and never used goes back to iCloud's pool
 const HME_PENDING_TTL_MS = 5 * 60_000;
+// a sign-in answers within this, or its save is dropped
+const SAVE_HOLD_MS = 60_000;
 // how long an iCloud.com sign-in check holds, so focusing email fields doesn't hammer validate
 const HME_SESSION_TTL_MS = 5 * 60_000;
 // short when unavailable, so signing in to iCloud.com takes effect on the next field
@@ -93,6 +97,8 @@ export function createRouter(env: RouterEnv) {
   // the address shown to each tab; a page can only ever reserve the one we generated for it
   const hmePending = new Map<number, { at: number; frameId: number; host: string; address: string }>();
   let hmeSession: { at: number; value: HmeSession } | undefined;
+  // a typed password waits here, per tab, until the sign-in it was typed for is seen to work
+  const heldSaves = new Map<number, { at: number; host: string; frameId: number; username: string; password: string; isNew: boolean }>();
 
   if (env.setIcon) {
     const setIcon = env.setIcon;
@@ -279,17 +285,18 @@ export function createRouter(env: RouterEnv) {
         return { ok: true, status: status() };
       }
       case "offerSave": {
-        const password = String(req.password ?? "");
-        if (!password) throw new Refused("no password");
-        // a locked session can't save; the user hasn't been asked for anything yet, so drop it
-        if (!client.ready) return { ok: true, status: status() };
-        let username = String(req.username ?? "").trim();
-        // a password change with no username field belongs to the site's only login
-        if (!username && req.isNew) {
-          const existing = await client.getLoginNames(at.tabId, at.host).catch(() => []);
-          if (existing.length === 1) username = existing[0]!.username;
-        }
-        await client.saveLogin(at.tabId, at.host, username, password);
+        const save = { at: now(), host: at.host, frameId: at.frameId, username: String(req.username ?? "").trim(), password: String(req.password ?? ""), isNew: !!req.isNew };
+        if (!save.password) throw new Refused("no password");
+        if (req.afterSignIn) heldSaves.set(at.tabId, save);
+        else await saveLogin(at.tabId, save);
+        return { ok: true, status: status() };
+      }
+      case "signInOutcome": {
+        const held = heldSaves.get(at.tabId);
+        // only the site the password was typed into settles it
+        if (!held || held.host !== at.host) return { ok: true, status: status() };
+        heldSaves.delete(at.tabId);
+        if (req.ok && now() - held.at < SAVE_HOLD_MS) await saveLogin(at.tabId, held);
         return { ok: true, status: status() };
       }
       case "inlineLaunch":
@@ -303,8 +310,44 @@ export function createRouter(env: RouterEnv) {
     }
   }
 
+  async function saveLogin(tabId: number, save: { host: string; username: string; password: string; isNew: boolean }): Promise<void> {
+    // a locked session can't save; the user hasn't been asked for anything yet, so drop it
+    if (!client.ready) return;
+    let username = save.username;
+    // a password change with no username field belongs to the site's only login
+    if (!username && save.isNew) {
+      const existing = await client.getLoginNames(tabId, save.host).catch(() => []);
+      if (existing.length === 1) username = existing[0]!.username;
+    }
+    await client.saveLogin(tabId, save.host, username, save.password);
+  }
+
+  /**
+   * A page finished loading in a tab whose save waits on a sign-in: a submit that navigated. The
+   * sign-in worked if the new page shows no login form; one shown again is a failed attempt.
+   */
+  async function tabLoaded(tabId: number): Promise<void> {
+    const held = heldSaves.get(tabId);
+    if (!held) return;
+    if (now() - held.at >= SAVE_HOLD_MS) return void heldSaves.delete(tabId);
+    const ask = (frameId: number) => env.sendToFrame(tabId, frameId, { type: "signInCheck" }).catch(() => undefined);
+    const frames = [...new Set([0, held.frameId])];
+    let answers = await Promise.all(frames.map(ask));
+    // the content script can start just after the load completes
+    if (answers[0]?.loginShown === undefined) {
+      await env.sleep?.(1_000);
+      answers = await Promise.all(frames.map(ask));
+    }
+    // a newer submit replaced it while we asked
+    if (heldSaves.get(tabId) !== held) return;
+    // not one of our pages (or none yet): leave it to the next load or the hold running out
+    if (answers[0]?.loginShown === undefined) return;
+    heldSaves.delete(tabId);
+    if (answers.every((a) => !a?.loginShown)) await saveLogin(tabId, held).catch(() => {});
+  }
+
   /** Answers one message, or `undefined` when it isn't ours to answer. */
-  return async function handle(msg: unknown, sender: Sender): Promise<Response | undefined> {
+  const handle = async function handle(msg: unknown, sender: Sender): Promise<Response | undefined> {
     if (sender.id !== env.extensionId || typeof msg !== "object" || msg === null) return undefined;
     const req = msg as Request;
     // the popup can also be opened as a tab, so it's told apart by its URL alone
@@ -329,4 +372,5 @@ export function createRouter(env: RouterEnv) {
       };
     }
   };
+  return Object.assign(handle, { tabLoaded });
 }

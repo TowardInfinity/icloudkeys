@@ -10,7 +10,7 @@ import { createRouter, webHost, type Sender } from "../src/router.ts";
 const EXT = "pejdijmoenmkgeppbflobdenhhabjlaj";
 const POPUP = `chrome-extension://${EXT}/popup.html`;
 
-async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void } = {}) {
+async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void; loginShown?: boolean } = {}) {
   const helper = new FakeHelper({
     "example.com": [{ username: "alice", password: "hunter2" }],
     "login.example.com": [{ username: "frame-user", password: "frame-pw" }],
@@ -43,6 +43,7 @@ async function setup(opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unl
     activeTab: async () => ({ id: 1, url: "https://example.com/login" }),
     sendToFrame: async (tabId, frameId, msg) => {
       sent.push({ tabId, frameId, msg });
+      if (msg.type === "signInCheck") return { filled: false, loginShown: opts.loginShown };
       return { filled: true };
     },
   });
@@ -135,6 +136,45 @@ describe("saving", () => {
     const { handle, helper } = await setup();
     await handle({ type: "offerSave", username: "", password: "new-pw", isNew: true }, page());
     expect(helper.saved).toEqual([{ host: "example.com", username: "alice", password: "new-pw" }]);
+  });
+
+  const typed = { type: "offerSave", username: "bob", password: "pw1", isNew: false, afterSignIn: true };
+
+  it("holds a typed password until the sign-in is reported working", async () => {
+    const { handle, helper } = await setup();
+    await handle(typed, page());
+    expect(helper.saved).toEqual([]);
+    await handle({ type: "signInOutcome", ok: true }, page());
+    expect(helper.saved).toEqual([{ host: "example.com", username: "bob", password: "pw1" }]);
+  });
+
+  it("never offers a password whose sign-in failed, or one settled by another site", async () => {
+    const { handle, helper } = await setup();
+    await handle(typed, page());
+    await handle({ type: "signInOutcome", ok: true }, page("https://evil.example/"));
+    await handle({ type: "signInOutcome", ok: false }, page());
+    await handle({ type: "signInOutcome", ok: true }, page());
+    expect(helper.saved).toEqual([]);
+  });
+
+  it("drops a held password once the hold runs out", async () => {
+    const { handle, helper, advance } = await setup();
+    await handle(typed, page());
+    advance(61_000);
+    await handle({ type: "signInOutcome", ok: true }, page());
+    expect(helper.saved).toEqual([]);
+  });
+
+  it("saves after a navigation only when the new page shows no login", async () => {
+    for (const [loginShown, saves] of [[false, 1], [true, 0]] as const) {
+      const { handle, helper } = await setup({ loginShown });
+      await handle(typed, page());
+      await handle.tabLoaded(1);
+      expect(helper.saved).toHaveLength(saves);
+      // settled either way: a later page can't save it
+      await handle({ type: "signInOutcome", ok: true }, page());
+      expect(helper.saved).toHaveLength(saves);
+    }
   });
 
   it("drops saves while locked", async () => {

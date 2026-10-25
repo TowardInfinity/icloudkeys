@@ -376,7 +376,7 @@ document.addEventListener(
   true,
 );
 
-function onFill(msg: ToContent): FillResult {
+function onFill(msg: Exclude<ToContent, { type: "signInCheck" }>): FillResult {
   // the background pinned the secret to this frame's host; a navigation in between must not leak it
   if (location.hostname.toLowerCase() !== msg.expectedHost) return { filled: false, error: "page changed origin" };
   if (!frameIsSafe()) return { filled: false, error: "refusing to fill a cross-origin frame" };
@@ -395,20 +395,63 @@ function onFill(msg: ToContent): FillResult {
 }
 
 chrome.runtime.onMessage.addListener((msg: ToContent, sender, sendResponse) => {
-  if (msg?.type !== "fill" && msg?.type !== "fillCode") return false;
+  if (msg?.type !== "fill" && msg?.type !== "fillCode" && msg?.type !== "signInCheck") return false;
   // only our own background; tabs.sendMessage from it carries no sender.tab
   if (sender.id !== chrome.runtime.id || sender.tab) {
     sendResponse({ filled: false, error: "forbidden" });
     return false;
   }
+  if (msg.type === "signInCheck") {
+    // a page that draws its form from script gets a moment to put it back up
+    setTimeout(() => sendResponse({ filled: false, loginShown: loginShown(document) }), SIGN_IN_SETTLE_MS);
+    return true;
+  }
   sendResponse(onFill(msg));
   return false;
 });
 
+// A typed password is offered only once the sign-in worked, as browsers do: the login form goes
+// away, on this page or by navigating (the background then asks the next page). A form still
+// up after the wait, or a password typed again, is a failed attempt and nothing is offered.
+const SIGN_IN_WAIT_MS = 8_000;
+const SIGN_IN_SETTLE_MS = 1_000;
+let stopWatching: (() => void) | undefined;
+
+function loginShown(root: Document | ShadowRoot): boolean {
+  const shown = (r: ParentNode) => Array.from(r.querySelectorAll('input[type="password"]')).some(isVisible);
+  return shown(document) || (root !== document && shown(root));
+}
+
+function watchSignIn(root: Document | ShadowRoot): void {
+  stopWatching?.();
+  const started = Date.now();
+  const settle = (ok: boolean) => {
+    stop();
+    void send({ type: "signInOutcome", ok });
+  };
+  const retyped = (e: Event) => {
+    if (e.isTrusted && e.composedPath()[0] instanceof Element && isPasswordField(e.composedPath()[0] as Element)) settle(false);
+  };
+  const timer = setInterval(() => {
+    if (!loginShown(root)) settle(true);
+    else if (Date.now() - started > SIGN_IN_WAIT_MS) settle(false);
+  }, 250);
+  // a navigation under way: the next page answers for it, however long the server takes
+  const stop = () => {
+    clearInterval(timer);
+    removeEventListener("input", retyped, true);
+    removeEventListener("beforeunload", stop);
+    stopWatching = undefined;
+  };
+  addEventListener("input", retyped, true);
+  addEventListener("beforeunload", stop);
+  stopWatching = stop;
+}
+
 const recent = (x: { at: number } | undefined, ms: number) => !!x && Date.now() - x.at < ms;
 
 // fire and forget: awaiting would let a navigating submit kill the save
-function maybeOfferSave(scope: ParentNode): void {
+function maybeOfferSave(scope: ParentNode, from: Node): void {
   if (!frameIsSafe()) return;
   const sub = collectSubmitted(scope);
   if (!sub) return;
@@ -420,7 +463,12 @@ function maybeOfferSave(scope: ParentNode): void {
   const key = `${sub.username} ${password}`;
   if (key === lastSave.key && Date.now() - lastSave.at < 15_000) return;
   lastSave = { key, at: Date.now() };
-  void send({ type: "offerSave", username: sub.username, password, isNew: sub.isNew || generated });
+  // a generated password is offered at once: losing it would lock the user out of the new account
+  void send({ type: "offerSave", username: sub.username, password, isNew: sub.isNew || generated, afterSignIn: !generated });
+  if (!generated) {
+    const root = from.getRootNode();
+    watchSignIn(root instanceof ShadowRoot ? root : document);
+  }
 }
 
 document.addEventListener(
@@ -428,7 +476,7 @@ document.addEventListener(
   (e) => {
     if (!e.isTrusted || !(e.target instanceof HTMLFormElement)) return;
     dropdown.close();
-    maybeOfferSave(e.target);
+    maybeOfferSave(e.target, e.target);
   },
   true,
 );
@@ -437,7 +485,7 @@ document.addEventListener(
   (e) => {
     if (!e.isTrusted || !(e.target instanceof Element)) return;
     const ctrl = e.target.closest('button, input[type=submit], input[type=button], [role="button"], a');
-    if (isSubmitControl(ctrl)) maybeOfferSave((ctrl as HTMLButtonElement).form ?? document);
+    if (isSubmitControl(ctrl)) maybeOfferSave((ctrl as HTMLButtonElement).form ?? document, ctrl!);
   },
   true,
 );
@@ -448,7 +496,7 @@ document.addEventListener(
     if (!e.isTrusted || e.key !== "Enter" || dropdown.selecting) return;
     const t = e.composedPath()[0];
     // formless logins submit from script on Enter, with no submit event
-    if (t instanceof HTMLInputElement && (isPasswordField(t) || isUsernameField(t))) maybeOfferSave(t.form ?? document);
+    if (t instanceof HTMLInputElement && (isPasswordField(t) || isUsernameField(t))) maybeOfferSave(t.form ?? document, t);
   },
   true,
 );

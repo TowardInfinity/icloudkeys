@@ -24,7 +24,10 @@ export type ContentRequest =
   | { type: "inlineFill"; username: string }
   | { type: "inlineCodes" }
   | { type: "inlineFillCode"; id: number }
-  | { type: "offerSave"; username: string; password: string; isNew: boolean }
+  /** `afterSignIn`: held until the sign-in is seen to work, so a mistyped password is never offered. */
+  | { type: "offerSave"; username: string; password: string; isNew: boolean; afterSignIn?: boolean }
+  /** What became of the sign-in a held save waits on: the login form went away, or it stayed. */
+  | { type: "signInOutcome"; ok: boolean }
   | { type: "openPopup" }
   | { type: "inlineLaunch" }
   /** Shows an address; nothing is created in iCloud until `hmeReserve`. */
@@ -71,9 +74,13 @@ export type Response =
 /** Background → content script, sent only to the frame that asked, or the top frame. */
 export type ToContent =
   | { type: "fill"; expectedHost: string; username: string; password: string }
-  | { type: "fillCode"; expectedHost: string; code: string };
+  | { type: "fillCode"; expectedHost: string; code: string }
+  /** After a page load, while a save waits on a sign-in: is a login form still showing? */
+  | { type: "signInCheck" };
 
 export interface FillResult {
   filled: boolean;
   error?: string;
+  /** The answer to `signInCheck`. */
+  loginShown?: boolean;
 }

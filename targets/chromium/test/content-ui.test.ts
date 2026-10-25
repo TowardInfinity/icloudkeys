@@ -186,7 +186,7 @@ describe("dropdown", () => {
     expect(b).toBe(a);
     await page.click("#go");
     const saves = (await sent(page)).filter((m) => m.type === "offerSave");
-    expect(saves).toEqual([{ type: "offerSave", username: "me@example.com", password: a, isNew: true }]);
+    expect(saves).toEqual([{ type: "offerSave", username: "me@example.com", password: a, isNew: true, afterSignIn: false }]);
     await page.close();
   });
 
@@ -495,7 +495,7 @@ describe("saving", () => {
     await page.keyboard.type("typed");
     await page.keyboard.press("Enter");
     expect((await sent(page)).filter((m) => m.type === "offerSave")).toEqual([
-      { type: "offerSave", username: "carol", password: "typed", isNew: false },
+      { type: "offerSave", username: "carol", password: "typed", isNew: false, afterSignIn: true },
     ]);
     await page.close();
   });
@@ -508,9 +508,53 @@ describe("saving", () => {
     await page.click("#go");
     await page.press("#pw", "Enter");
     expect((await sent(page)).filter((m) => m.type === "offerSave")).toEqual([
-      { type: "offerSave", username: "bob", password: "typed-pw", isNew: false },
+      { type: "offerSave", username: "bob", password: "typed-pw", isNew: false, afterSignIn: true },
     ]);
     await page.close();
+  });
+
+  const outcomes = async (page: Page) => (await sent(page)).filter((m) => m.type === "signInOutcome").map((m) => m.ok);
+  const submitTyped = async (page: Page) => {
+    await page.fill("#user", "bob");
+    await page.fill("#pw", "typed-pw");
+    await page.keyboard.press("Escape");
+    await page.click("#go");
+  };
+
+  it("reports a typed sign-in as working once the login form goes away", async () => {
+    const page = await open("/login");
+    await submitTyped(page);
+    await page.waitForTimeout(600);
+    expect(await outcomes(page)).toEqual([]);
+    await page.evaluate(() => document.querySelector("form")!.remove());
+    await expect.poll(() => outcomes(page)).toEqual([true]);
+    await page.close();
+  });
+
+  it("reports a failed sign-in when the password is typed again", async () => {
+    const page = await open("/login");
+    await submitTyped(page);
+    await page.fill("#pw", "");
+    await page.type("#pw", "x");
+    await expect.poll(() => outcomes(page)).toEqual([false]);
+    await page.close();
+  });
+
+  it("reports a failed sign-in when the login form stays up", async () => {
+    const page = await open("/login");
+    await submitTyped(page);
+    await expect.poll(() => outcomes(page), { timeout: 10_000 }).toEqual([false]);
+    await page.close();
+  }, 15_000);
+
+  it("tells the background whether a newly loaded page still shows a login", async () => {
+    const check = (page: Page) => page.evaluate(() => (window as any).__deliver({ type: "signInCheck" }, { id: "ext" }));
+    const login = await open("/login");
+    expect(await check(login)).toMatchObject({ loginShown: true });
+    await login.close();
+    const otp = await open("/otp");
+    expect(await check(otp)).toMatchObject({ loginShown: false });
+    await otp.close();
   });
 
   it("doesn't offer a login it just filled", async () => {

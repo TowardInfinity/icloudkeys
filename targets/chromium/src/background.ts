@@ -54,10 +54,16 @@ const handle = createRouter({
   async openPopup() {
     await chrome.action.openPopup();
   },
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   setIcon(unlocked) {
     const variant = unlocked ? "icon" : "icon-locked";
     void chrome.action.setIcon({ path: { 16: `icons/${variant}-16.png`, 32: `icons/${variant}-32.png` } }).catch(() => {});
   },
+});
+
+// a submit that navigated: the new page tells whether the sign-in a held save waits on worked
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === "complete") void handle.tabLoaded(tabId);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
