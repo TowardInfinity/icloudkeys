@@ -23,6 +23,14 @@ Passwords extension; they share an ID, and merely disabling Apple's leaves its m
 
 Hide My Email needs iCloud+ and a sign-in to icloud.com in the same browser.
 
+## Why Sideload / Unpacked?
+
+Apple's macOS native helper (`com.apple.passwordmanager`) enforces strict allowlists:
+1. **Extension ID Allowlist:** The native helper only responds to Apple's official extension IDs (`pejdijmoenmkgeppbflobdenhhabjlaj` for Chrome, `mfbcdcnpokpoajjciilocoachedjkima` for Edge). iCloudKeys ships Apple's public key in its manifest to derive this exact ID.
+2. **Browser Code Signature:** macOS 15.4+ verifies the calling browser binary's signature (Chrome, Brave, Edge, Arc, Vivaldi).
+
+Because the extension ID belongs to Apple's official extensions, this project cannot be published to the Chrome Web Store or Edge Add-ons. It is loaded unpacked as an open-source client.
+
 ## Develop
 
 ```sh
