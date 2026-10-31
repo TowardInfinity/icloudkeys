@@ -14,6 +14,7 @@ const STUB = `(() => {
   globalThis.chrome = { runtime: { sendMessage: async (msg) => {
     window.__sent.push(msg);
     if (msg.type === "verify") return { ok: true, status: status("unlocked") };
+    if (msg.type === "hmeStatus") return { ok: true, status: status("unlocked"), hme: window.__hme };
     return { ok: true, status: status(window.__sent.some((m) => m.type === "verify") ? "unlocked" : "needs_pin"), logins: [] };
   } } };
 })();`;
@@ -50,6 +51,49 @@ async function open(): Promise<Page> {
 
 const verifies = (page: Page) =>
   page.evaluate(() => ((window as any).__sent as { type: string }[]).filter((m) => m.type === "verify"));
+
+describe("Hide My Email", () => {
+  async function hmeRow(hme: unknown) {
+    const page = await open();
+    await page.evaluate((h) => {
+      (window as any).__hme = h;
+      (window as any).__opened = [];
+      window.open = (url?: string | URL) => ((window as any).__opened.push(String(url)), null);
+    }, hme);
+    await page.fill("#pin", "123456");
+    const row = page.locator("button.row", { hasText: "Hide My Email" });
+    await row.waitFor();
+    return { page, row };
+  }
+  const opened = (page: Page) => page.evaluate(() => (window as any).__opened as string[]);
+  const created = (page: Page) => page.evaluate(() => ((window as any).__sent as { type: string }[]).filter((m) => m.type === "hmeCreate").length);
+
+  it("opens iCloud.com when the browser isn't signed in", async () => {
+    const { page, row } = await hmeRow({ available: false, reason: "not-signed-in" });
+    await expect.poll(() => row.locator(".detail").textContent()).toContain("sign in");
+    expect(await row.isDisabled()).toBe(false);
+    await row.click();
+    expect(await opened(page)).toEqual(["https://www.icloud.com/"]);
+    expect(await created(page)).toBe(0);
+    await page.close();
+  });
+
+  it("stays disabled when signing in wouldn't help", async () => {
+    const { page, row } = await hmeRow({ available: false, reason: "no-icloud-plus" });
+    await expect.poll(() => row.locator(".detail").textContent()).toBe("Needs iCloud+");
+    expect(await row.isDisabled()).toBe(true);
+    await page.close();
+  });
+
+  it("creates an address when it's available, opening nothing", async () => {
+    const { page, row } = await hmeRow({ available: true });
+    await expect.poll(() => row.locator(".detail").textContent()).toBe("Create a new address");
+    await row.click();
+    await expect.poll(() => created(page)).toBe(1);
+    expect(await opened(page)).toEqual([]);
+    await page.close();
+  });
+});
 
 describe("pairing code", () => {
   it("has no Unlock button; the sixth digit is the submit", async () => {

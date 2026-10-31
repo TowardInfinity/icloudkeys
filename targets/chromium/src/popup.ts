@@ -124,7 +124,7 @@ async function renderCodes(): Promise<void> {
 }
 
 const HME_REASONS: Record<string, string> = {
-  "not-signed-in": "Sign in to icloud.com in this browser to use it",
+  "not-signed-in": "Click to sign in at icloud.com",
   "no-icloud-plus": "Needs iCloud+",
   "rate-limited": "iCloud is rate-limiting, try again shortly",
 };
@@ -134,24 +134,29 @@ function renderActions(canOpenNewPassword: boolean): void {
   if (canOpenNewPassword) {
     actions.append(row("plus", "New Password…", "", () => void send({ type: "launch", mode: "new" }).then(() => window.close())).li);
   }
+  let needsSignIn = false;
   const hme = row("mail", "Hide My Email", "", async () => {
     showError(null);
+    if (needsSignIn) return void window.open("https://www.icloud.com/", "_blank", "noopener");
     const res = await send({ type: "hmeCreate" });
     if (!res.ok || !res.address) return showError(res.ok ? "no address returned" : res.error);
     showValue("alias", res.address);
     await navigator.clipboard.writeText(res.address).catch(() => {});
   });
   actions.append(hme.li);
-  void renderHme(hme.btn);
+  void renderHme(hme.btn).then((signIn) => (needsSignIn = signIn));
 }
 
-async function renderHme(btn: HTMLButtonElement): Promise<void> {
+/** Returns whether signing in to iCloud.com is what the row should offer. */
+async function renderHme(btn: HTMLButtonElement): Promise<boolean> {
   const res = await send({ type: "hmeStatus" });
   const available = res.ok && res.hme?.available === true;
-  btn.disabled = !available;
+  const signIn = res.ok && res.hme?.reason === "not-signed-in";
+  btn.disabled = !available && !signIn;
   btn.querySelector(".detail")!.textContent = available
     ? "Create a new address"
     : (HME_REASONS[(res.ok && res.hme?.reason) || ""] ?? "Unavailable");
+  return signIn;
 }
 
 async function pair(): Promise<void> {
