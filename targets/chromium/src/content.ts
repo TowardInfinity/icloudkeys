@@ -245,6 +245,26 @@ async function offerCodes(field: HTMLInputElement, asked = false): Promise<void>
   // the last field's list must not stay up over this one
   if (!res?.status.canFillCodes && !asked) return dropdown.close();
   showCodes(field, res, asked);
+  if (res?.ok && res.status.canFillCodes && res.status.state === "unlocked" && !res.codes?.length) watchForCode(field, seq);
+}
+
+// sites focus the code field the moment they send the message, so the code lands after the only look
+const CODE_WATCH_GAP_MS = 3_000;
+const CODE_WATCH_MS = 2 * 60_000;
+
+function watchForCode(field: HTMLInputElement, seq: number): void {
+  const started = Date.now();
+  const look = async (): Promise<void> => {
+    const live = () => seq === offerSeq && deepActive() === field && !field.value;
+    if (!live() || Date.now() - started > CODE_WATCH_MS) return;
+    if (!document.hidden) {
+      const res = await send({ type: "inlineCodes" });
+      if (!live()) return;
+      if (res?.ok && res.codes?.length) return showCodes(field, res, false);
+    }
+    setTimeout(look, CODE_WATCH_GAP_MS);
+  };
+  setTimeout(look, CODE_WATCH_GAP_MS);
 }
 
 function showCodes(field: HTMLInputElement, res: Response | undefined, asked: boolean, showAll = false): void {

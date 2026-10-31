@@ -386,6 +386,25 @@ describe("forms", () => {
     expect(got).toBe(expected);
   });
 
+  it.each([0, 1, 3])("fills the whole row when the user was on box %i", async (at) => {
+    const got = await withBody(`<div data-at="${at}">` + '<input maxlength="1" style="width:48px">'.repeat(4) + "</div>", () => {
+      const boxes = Array.from(document.querySelectorAll("input"));
+      const start = Number(document.querySelector("div")!.dataset.at);
+      (globalThis as any).Classifier.fillOneTimeCode(boxes[start], "4821");
+      return boxes.map((b) => b.value);
+    });
+    expect(got).toEqual(["4", "8", "2", "1"]);
+  });
+
+  it("starts at the user's box when the row is longer than the code", async () => {
+    const got = await withBody('<div>' + '<input maxlength="1" style="width:48px">'.repeat(6) + "</div>", () => {
+      const boxes = Array.from(document.querySelectorAll("input"));
+      (globalThis as any).Classifier.fillOneTimeCode(boxes[2], "4821");
+      return boxes.map((b) => b.value);
+    });
+    expect(got).toEqual(["", "", "4", "8", "2", "1"]);
+  });
+
   it("keeps a code in one box when wide boxes share a row", async () => {
     const got = await withBody(`<div style="display:flex">${'<input style="width:200px">'.repeat(4)}</div>`, () => {
       const boxes = Array.from(document.querySelectorAll("input"));
