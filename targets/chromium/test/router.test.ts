@@ -100,6 +100,73 @@ describe("inline fill", () => {
     expect(JSON.stringify(res)).not.toContain("hunter2");
   });
 
+  it("remembers the account picked on a login's first page for that tab and host", async () => {
+    const { handle } = await setup();
+    await handle({ type: "inlinePick", username: "alice" }, page());
+    expect(await handle({ type: "inlineLogins" }, page())).toMatchObject({ picked: "alice" });
+    await handle({ type: "inlinePick", username: "" }, page());
+    expect(await handle({ type: "inlineLogins" }, page())).not.toHaveProperty("picked");
+  });
+
+  it("forgets a picked account after ten minutes", async () => {
+    const { handle, advance } = await setup();
+    await handle({ type: "inlinePick", username: "alice" }, page());
+    advance(10 * 60_000);
+    expect(await handle({ type: "inlineLogins" }, page())).not.toHaveProperty("picked");
+  });
+
+  it("remembers the account whose password was filled, for the code step", async () => {
+    const { handle } = await setup({ codes: true });
+    await handle({ type: "inlineFill", username: "alice" }, page());
+    expect(await handle({ type: "inlineCodes" }, page())).toMatchObject({ picked: "alice" });
+  });
+
+  it("remembers an account filled from the toolbar", async () => {
+    const { handle } = await setup({ codes: true });
+    await handle({ type: "fill", username: "alice" }, popup);
+    expect(await handle({ type: "inlineCodes" }, page())).toMatchObject({ picked: "alice" });
+  });
+
+  it("doesn't remember an account whose fill failed", async () => {
+    const { handle } = await setup({ codes: true });
+    await handle({ type: "inlineFill", username: "nobody" }, page()).catch(() => {});
+    expect(await handle({ type: "inlineCodes" }, page())).not.toHaveProperty("picked");
+  });
+
+  it("starts the pick's ten minutes again when the password is filled", async () => {
+    const { handle, advance } = await setup({ codes: true });
+    await handle({ type: "inlinePick", username: "alice" }, page());
+    advance(9 * 60_000);
+    await handle({ type: "inlineFill", username: "alice" }, page());
+    advance(9 * 60_000);
+    expect(await handle({ type: "inlineCodes" }, page())).toMatchObject({ picked: "alice" });
+  });
+
+  it("names the pick to the code step only on its own tab and host, within ten minutes", async () => {
+    const { handle, advance } = await setup({ codes: true });
+    await handle({ type: "inlinePick", username: "alice" }, page());
+    const otherTab = { ...page(), tab: { id: 2, url: "https://example.com/login" } };
+    expect(await handle({ type: "inlineCodes" }, otherTab)).not.toHaveProperty("picked");
+    expect(await handle({ type: "inlineCodes" }, page("https://other.example.org/"))).not.toHaveProperty("picked");
+    advance(10 * 60_000);
+    expect(await handle({ type: "inlineCodes" }, page())).not.toHaveProperty("picked");
+  });
+
+  it("files a pick under the sender's host, whatever the message says", async () => {
+    const { handle } = await setup({ codes: true });
+    await handle({ type: "inlinePick", username: "alice", host: "evil.example", url: "https://evil.example/" }, page());
+    expect(await handle({ type: "inlineCodes" }, page("https://evil.example/"))).not.toHaveProperty("picked");
+    expect(await handle({ type: "inlineCodes" }, page())).toMatchObject({ picked: "alice" });
+  });
+
+  it("doesn't carry a picked account to another host or name an account not saved here", async () => {
+    const { handle } = await setup();
+    await handle({ type: "inlinePick", username: "alice" }, page());
+    expect(await handle({ type: "inlineLogins" }, page("https://other.example.org/"))).not.toHaveProperty("picked");
+    await handle({ type: "inlinePick", username: "mallory" }, page());
+    expect(await handle({ type: "inlineLogins" }, page())).not.toHaveProperty("picked");
+  });
+
   it("queries by the sender's host and fills only the asking frame, pinned to it", async () => {
     const { handle, sent } = await setup();
     // a page naming another host in the message gets nothing for it
@@ -138,6 +205,56 @@ describe("saving", () => {
     const { handle, helper } = await setup();
     await handle({ type: "offerSave", username: "", password: "new-pw", isNew: true }, page());
     expect(helper.saved).toEqual([{ host: "example.com", username: "alice", password: "new-pw" }]);
+  });
+
+  it("gives a two-step login's save the id typed on the page before", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlineIdStep", username: "new@example.com" }, page());
+    await handle({ type: "offerSave", username: "", password: "pw", isNew: false, afterSignIn: true }, page());
+    await handle({ type: "signInOutcome", ok: true }, page());
+    expect(helper.saved).toEqual([{ host: "example.com", username: "new@example.com", password: "pw" }]);
+  });
+
+  it("gives a multi-page sign-up's new password the email from the page before", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlineIdStep", username: "new@example.com" }, page());
+    await handle({ type: "offerSave", username: "", password: "pw", isNew: true }, page());
+    expect(helper.saved).toEqual([{ host: "example.com", username: "new@example.com", password: "pw" }]);
+  });
+
+  it("uses a submitted id for one save only", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlineIdStep", username: "new@example.com" }, page());
+    await handle({ type: "offerSave", username: "", password: "pw", isNew: true }, page());
+    await handle({ type: "offerSave", username: "", password: "pw2", isNew: true }, page());
+    expect(helper.saved.at(-1)?.username).not.toBe("new@example.com");
+  });
+
+  it("never names a save after an account picked or filled earlier", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlinePick", username: "bob" }, page());
+    await handle({ type: "offerSave", username: "", password: "pw", isNew: true }, page());
+    expect(helper.saved.at(-1)?.username).not.toBe("bob");
+  });
+
+  it("lets a submitted id narrow the next page's list", async () => {
+    const { handle } = await setup();
+    await handle({ type: "inlineIdStep", username: "alice" }, page());
+    expect(await handle({ type: "inlineLogins" }, page())).toMatchObject({ picked: "alice" });
+  });
+
+  it("prefers the id on the password's own page", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlineIdStep", username: "old@example.com" }, page());
+    await handle({ type: "offerSave", username: "bob", password: "pw", isNew: true }, page());
+    expect(helper.saved).toEqual([{ host: "example.com", username: "bob", password: "pw" }]);
+  });
+
+  it("doesn't carry a typed id to another site", async () => {
+    const { handle, helper } = await setup();
+    await handle({ type: "inlineIdStep", username: "new@example.com" }, page());
+    await handle({ type: "offerSave", username: "", password: "pw", isNew: true }, page("https://other.example/login"));
+    expect(helper.saved.at(-1)?.username).not.toBe("new@example.com");
   });
 
   const typed = { type: "offerSave", username: "bob", password: "pw1", isNew: false, afterSignIn: true };

@@ -22,6 +22,9 @@ export type ContentRequest =
   | { type: "inlineStatus" }
   | { type: "inlineLogins" }
   | { type: "inlineFill"; username: string }
+  /** The account picked at a login's first step, for the next step's list. Empty forgets it. */
+  | { type: "inlinePick"; username: string }
+  | { type: "inlineIdStep"; username: string }
   | { type: "inlineCodes" }
   | { type: "inlineFillCode"; id: number }
   /** `afterSignIn`: held until the sign-in is seen to work, so a mistyped password is never offered. */
@@ -62,6 +65,8 @@ export type Response =
       status: Status;
       host?: string;
       logins?: Login[];
+      /** The account picked earlier in this sign-in, for narrowing `logins` or `codes`. */
+      picked?: string;
       codes?: CodeRow[];
       requiresAuth?: boolean;
       /** A code the popup shows when no field on the page took it. */

@@ -10,6 +10,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const CONTENT = fileURLToPath(new URL("../dist/content.js", import.meta.url));
 
+const SHADOW_FIELD = `<script>customElements.define("x-field", class extends HTMLElement {
+  connectedCallback() {
+    const input = document.createElement("input");
+    for (const a of this.getAttributeNames()) input.setAttribute(a, this.getAttribute(a));
+    this.attachShadow({ mode: "open" }).append(input);
+  }
+});</script>`;
+
 const PAGES: Record<string, string> = {
   "/two-logins": `<form onsubmit="event.preventDefault()">
       <input id="user1" name="username" autocomplete="username">
@@ -26,11 +34,47 @@ const PAGES: Record<string, string> = {
       <input id="pw" type="password" name="new" autocomplete="new-password">
       <input id="pw2" type="password" name="confirm" autocomplete="new-password">
       <button id="go" type="submit">Create account</button></form>`,
+  // each field in its own shadow root and no real form, as on reddit.com
+  "/shadow-login": `${SHADOW_FIELD}
+    <x-field name="username" autocomplete="username webauthn"></x-field>
+    <x-field name="password" type="password" autocomplete="current-password"></x-field>
+    <button id="go" type="button">Log In</button>`,
+  "/shadow-signup": `${SHADOW_FIELD}
+    <x-field name="pw1" type="password" autocomplete="new-password"></x-field>
+    <x-field name="pw2" type="password" autocomplete="new-password"></x-field>`,
+  "/shadow-beside-signup": `${SHADOW_FIELD}
+    <form><x-field name="username" autocomplete="username"></x-field></form>
+    <form><x-field name="newpw" type="password" autocomplete="new-password"></x-field></form>`,
   "/two-step-beside-signup": `<form id="a" onsubmit="event.preventDefault()">
       <input id="user" name="username" autocomplete="username"><button>Next</button></form>
     <form id="b" onsubmit="event.preventDefault()">
       <input id="email" type="email" name="email" autocomplete="email">
       <input id="newpw" type="password" name="new" autocomplete="new-password"></form>`,
+  "/two-step-decoy-password": `<form onsubmit="event.preventDefault()">
+      <input id="user" name="identifier" autocomplete="username">
+      <input id="hint" type="password" name="hiddenPassword" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;width:0;height:0">
+      <button>Next</button></form>`,
+  "/v3/signin/identifier": `<title>Sign in - Google Accounts</title><form onsubmit="event.preventDefault()">
+      <input id="user" name="identifier" autocomplete="username webauthn" aria-label="Email or phone">
+      <input type="password" name="hiddenPassword" tabindex="-1" aria-hidden="true" style="display:none">
+      <button type="button">Create account</button><button type="button">Next</button></form>`,
+  "/plain-email": `<form onsubmit="event.preventDefault()"><input id="email" type="email" autocomplete="username"><button>Next</button></form>`,
+  "/code-field": `<title>Sign in</title><input id="c" type="tel" name="totpPin" autocomplete="off" aria-label="Enter code" pattern="[0-9 ]*">`,
+  "/shown-account": `<div data-profile-identifier>bob@example.com</div><form onsubmit="event.preventDefault()"><input id="pw" type="password" autocomplete="current-password"></form>`,
+  "/shown-unknown": `<div data-profile-identifier>nobody@example.com</div><form onsubmit="event.preventDefault()"><input id="pw" type="password" autocomplete="current-password"></form>`,
+  "/id-step": `<title>Sign in</title><form onsubmit="event.preventDefault()"><input id="user" autocomplete="username"><button id="next">Next</button></form>`,
+  "/closed-shadow": `<x-login id="host" style="display:block;width:300px"></x-login><script>
+      const host = document.getElementById("host");
+      host.__closed = host.attachShadow({ mode: "closed" });
+      host.__closed.innerHTML = '<input id="user" name="username" autocomplete="username" style="width:280px"><input id="pw" type="password" style="width:280px"><button id="go" style="display:block;width:280px;height:30px">Sign in</button>';
+      </script>`,
+  "/signin/scenes": `<title>Sign in</title><div id="app"><input id="user" name="identifier" autocomplete="username webauthn"></div>
+      <button type="button" id="next" onclick="next()">Next</button><script>
+      const scenes = ['<input id="ca" name="ca" aria-label="Type the text you hear or see">',
+        '<input id="pw" type="password" name="Passwd" autocomplete="current-password">',
+        '<input id="totpPin" type="tel" name="totpPin" autocomplete="off" aria-label="Enter code" pattern="[0-9 ]*">'];
+      function next() { document.getElementById("app").innerHTML = scenes.shift(); document.querySelector("#app input").focus(); }
+      </script>`,
   "/button": `<form onsubmit="event.preventDefault()">
       <input id="user" name="username" autocomplete="username">
       <input id="pw" type="password" name="password" autocomplete="current-password"></form>
@@ -68,13 +112,15 @@ const STUB = `(() => {
   const listeners = [];
   window.__sent = [];
   window.__reply = { status: { state: "unlocked", hasChallenge: false, canFillCodes: true, canOpenNewPassword: false, canHideEmail: true } };
-  globalThis.chrome = { runtime: {
+  globalThis.chrome = { dom: { openOrClosedShadowRoot: (el) => el.shadowRoot ?? el.__closed ?? null }, runtime: {
     id: "ext",
     sendMessage: async (msg) => {
       window.__sent.push(msg);
       // logins ride along on every reply, so only the content script's own gating keeps them off a field
       const base = { ok: true, ...window.__reply, logins: window.__logins ?? [{ username: "alice", sites: ["example.com"] }, { username: "bob@example.com", sites: ["www.example.com"] }] };
-      if (msg.type === "inlineCodes") return { ...base, codes: [{ id: 0, source: "sms", username: "", domain: location.hostname }] };
+      if (msg.type === "inlinePick") window.__picked = msg.username || undefined;
+      if (msg.type === "inlineLogins" && window.__picked) return { ...base, picked: window.__picked };
+      if (msg.type === "inlineCodes") return { ...base, picked: window.__picked, codes: window.__codes ?? (window.__noCodes ? [] : [{ id: 0, source: "sms", username: "", domain: location.hostname }]) };
       if (msg.type === "hmeGenerate" && window.__hmeDelay) await new Promise((r) => setTimeout(r, window.__hmeDelay));
       if (msg.type === "hmeGenerate" && window.__hmeFail) return { ...base, ok: false, error: "wait a moment" };
       // like the router, reserve hands out the address last shown, never a refused one
@@ -771,6 +817,447 @@ describe("regressions", () => {
     await expect.poll(() => dropdownShown(page)).toBe(true);
     const [before, after] = await gapsAfterScroll(page);
     expect(after).toEqual(before);
+    await page.close();
+  });
+
+  describe("fields in separate shadow roots", () => {
+    const fill = (page: Page) =>
+      page.evaluate(() =>
+        (window as any).__deliver({ type: "fill", expectedHost: "127.0.0.1", username: "alice", password: "hunter2" }, { id: "ext" }),
+      );
+    const values = (page: Page, ...names: string[]) => Promise.all(names.map((n) => page.inputValue(`input[name="${n}"]`)));
+
+    it("fills both when the user name is picked", async () => {
+      const page = await open("/shadow-login");
+      await page.click('input[name="username"]');
+      expect(await fill(page)).toEqual({ filled: true });
+      expect(await values(page, "username", "password")).toEqual(["alice", "hunter2"]);
+      await page.close();
+    });
+
+    it("fills both when the password is picked", async () => {
+      const page = await open("/shadow-login");
+      await page.click('input[name="password"]');
+      await fill(page);
+      expect(await values(page, "username", "password")).toEqual(["alice", "hunter2"]);
+      await page.close();
+    });
+
+    it("fills both from the popup, with no field picked", async () => {
+      const page = await open("/shadow-login");
+      await fill(page);
+      expect(await values(page, "username", "password")).toEqual(["alice", "hunter2"]);
+      await page.close();
+    });
+
+    it("offers to save a login typed into them", async () => {
+      const page = await open("/shadow-login");
+      await page.fill('input[name="username"]', "carol");
+      await page.fill('input[name="password"]', "typed");
+      await page.click("#go");
+      expect((await sent(page)).filter((m) => m.type === "offerSave")).toEqual([
+        { type: "offerSave", username: "carol", password: "typed", isNew: false, afterSignIn: true },
+      ]);
+      await page.close();
+    });
+
+    it("doesn't count a sign-in as working while the password field is still up", async () => {
+      const page = await open("/shadow-login");
+      await page.fill('input[name="username"]', "carol");
+      await page.fill('input[name="password"]', "typed");
+      await page.click("#go");
+      await page.waitForTimeout(2_200);
+      expect((await sent(page)).filter((m) => m.type === "signInOutcome" && m.ok)).toEqual([]);
+      await page.close();
+    });
+
+    it("puts a generated password into the confirm field too", async () => {
+      const page = await open("/shadow-signup");
+      await page.click('input[name="pw1"]');
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      await page.mouse.click(...(Object.values(await firstRow(page)) as [number, number]));
+      const [a, b] = await values(page, "pw1", "pw2");
+      expect(a).not.toBe("");
+      expect(b).toBe(a);
+      await page.close();
+    });
+
+    it("stays inside the form around the field's shadow host", async () => {
+      const page = await open("/shadow-beside-signup");
+      await page.click('input[name="username"]');
+      await fill(page);
+      expect(await values(page, "username", "newpw")).toEqual(["alice", ""]);
+      await page.close();
+    });
+  });
+
+  it("doesn't ask for the password on a two-step login's first page, so Touch ID comes once", async () => {
+    const page = await open("/two-step-beside-signup");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.mouse.click(...(Object.values(await firstRow(page)) as [number, number]));
+    expect(await page.inputValue("#user")).toBe("alice");
+    expect(await fills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("doesn't ask for the password when the only password field is a zero-size decoy", async () => {
+    const page = await open("/two-step-decoy-password");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.mouse.click(...(Object.values(await firstRow(page)) as [number, number]));
+    expect(await page.inputValue("#user")).toBe("alice");
+    expect(await fills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("offers saved logins and no new address on a sign-in page with a Create account button", async () => {
+    const page = await open("/v3/signin/identifier");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await page.inputValue("#user")).toBe("alice");
+    expect((await sent(page)).map((m) => m.type)).not.toContain("hmeGenerate");
+    await page.close();
+  });
+
+  it("lists saved logins above Hide My Email when the page doesn't say what it is", async () => {
+    const page = await open("/plain-email");
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await page.inputValue("#email")).toBe("alice");
+    await page.close();
+  });
+
+  it("still offers Hide My Email below the logins on such a page", async () => {
+    const page = await open("/plain-email");
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await sent(page)).map((m) => m.type)).toContain("hmeGenerate");
+    await page.close();
+  });
+
+  it("puts Hide My Email first on such a page with no saved login", async () => {
+    const page = await open("/plain-email");
+    await page.evaluate(() => ((window as any).__logins = []));
+    await page.click("#email");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await sent(page)).map((m) => m.type)).toContain("hmeGenerate");
+    await page.close();
+  });
+
+  it("offers the right thing at each scene of an id-only login: id, captcha, password, code", async () => {
+    const page = await open("/signin/scenes");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await page.inputValue("#user")).toBe("alice");
+    expect(await fills(page)).toEqual([]);
+
+    await page.click("#next");
+    await expect.poll(() => page.evaluate(() => !!document.querySelector("#ca"))).toBe(true);
+    await page.waitForTimeout(150);
+    expect(await dropdownShown(page)).toBe(false);
+
+    await page.click("#next");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "alice" }]);
+
+    await page.click("#next");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect((await sent(page)).filter((m) => m.type === "inlineFillCode")).toEqual([{ type: "inlineFillCode", id: 0 }]);
+    await page.close();
+  });
+
+  const pickFirstThenNext = async (page: Page, user: string) => {
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await page.inputValue("#user")).toBe(user);
+    await page.evaluate(() => (window as any).next());
+    await page.evaluate(() => (window as any).next());
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+  };
+
+  it("offers only the account picked on the first page at the password step", async () => {
+    const page = await open("/signin/scenes");
+    await pickFirstThenNext(page, "alice");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "alice" }]);
+    await page.close();
+  });
+
+  it("never fills the password step without a pick", async () => {
+    const page = await open("/signin/scenes");
+    await pickFirstThenNext(page, "alice");
+    await page.waitForTimeout(200);
+    expect(await fills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("reaches the other accounts from the password step", async () => {
+    const page = await open("/signin/scenes");
+    await pickFirstThenNext(page, "alice");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect(await fills(page)).toEqual([]);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "bob@example.com" }]);
+    await page.close();
+  });
+
+  it("forgets the pick when the user edits the id", async () => {
+    const page = await open("/signin/scenes");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await page.click("#user");
+    await page.keyboard.type("x");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "inlinePick").at(-1)).toEqual({ type: "inlinePick", username: "" });
+    await page.close();
+  });
+
+  const codeRows = [
+    { id: 0, source: "sms", username: "", domain: "example.com" },
+    { id: 1, source: "totp", username: "alice", domain: "example.com" },
+    { id: 2, source: "totp", username: "bob@example.com", domain: "example.com" },
+  ];
+  const openCodes = async (codes: typeof codeRows, picked?: string) => {
+    const page = await open("/code-field");
+    await page.evaluate(([c, p]) => Object.assign(window as any, { __codes: c, __picked: p }), [codes, picked] as const);
+    await page.click("#c");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    return page;
+  };
+  const choose = async (page: Page, downs: number) => {
+    for (let i = 0; i < downs; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+  };
+  const codeFills = async (page: Page) => (await sent(page)).filter((m) => m.type === "inlineFillCode");
+
+  it("offers the picked account's code and messages, not another account's", async () => {
+    const page = await openCodes(codeRows, "alice");
+    await choose(page, 2);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 1 }]);
+    await page.close();
+  });
+
+  it("reaches another account's code through Other Accounts", async () => {
+    const page = await openCodes(codeRows, "alice");
+    await choose(page, 3);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect(await codeFills(page)).toEqual([]);
+    await choose(page, 3);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 2 }]);
+    await page.close();
+  });
+
+  it("opens Other Accounts by mouse and keeps the field focused", async () => {
+    const page = await openCodes(codeRows, "alice");
+    const first = await firstRow(page);
+    await page.mouse.click(first.x, first.y + 88);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect(await codeFills(page)).toEqual([]);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("c");
+    await page.mouse.click(first.x, first.y + 88);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 2 }]);
+    await page.close();
+  });
+
+  it("matches the picked account to a code whatever the case", async () => {
+    const page = await openCodes(codeRows, "ALICE");
+    await choose(page, 3);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    expect(await codeFills(page)).toEqual([]);
+    await page.close();
+  });
+
+  it("shows every code when the picked account has none", async () => {
+    const page = await openCodes(codeRows, "carol");
+    await choose(page, 3);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 2 }]);
+    await page.close();
+  });
+
+  it("shows every code when no account was picked", async () => {
+    const page = await openCodes(codeRows);
+    await choose(page, 3);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 2 }]);
+    await page.close();
+  });
+
+  it("adds no Other Accounts row when nothing is hidden", async () => {
+    const page = await openCodes(codeRows.slice(0, 2), "alice");
+    await choose(page, 3);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 0 }]);
+    await page.close();
+  });
+
+  it("carries a pick from the id screen through to the code screen", async () => {
+    const page = await open("/signin/scenes");
+    await page.evaluate((c) => ((window as any).__codes = c), codeRows);
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    await page.evaluate(() => { const w = window as any; w.next(); w.next(); w.next(); });
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 2);
+    expect(await codeFills(page)).toEqual([{ type: "inlineFillCode", id: 1 }]);
+    await page.close();
+  });
+
+  it("remembers an id typed in full, whatever the case", async () => {
+    const page = await open("/signin/scenes");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.type("BOB@EXAMPLE.COM");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "inlinePick").at(-1)).toEqual({ type: "inlinePick", username: "bob@example.com" });
+    await page.close();
+  });
+
+  it("tells the background once, not on every key, while the typed id matches nothing", async () => {
+    const page = await open("/signin/scenes");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.type("xyz");
+    await page.waitForTimeout(100);
+    expect((await sent(page)).filter((m) => m.type === "inlinePick")).toEqual([{ type: "inlinePick", username: "" }]);
+    await page.close();
+  });
+
+  it("narrows a password step to the account the page names", async () => {
+    const page = await open("/shown-account");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    expect((await fills(page)).at(-1)).toMatchObject({ username: "bob@example.com" });
+    await page.close();
+  });
+
+  it("ignores an account the page names that isn't saved", async () => {
+    const page = await open("/shown-unknown");
+    await page.click("#pw");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    expect((await fills(page)).at(-1)).toMatchObject({ username: "alice" });
+    await page.close();
+  });
+
+  it("remembers an id submitted on its own, for the save on the next page", async () => {
+    const page = await open("/id-step");
+    await page.fill("#user", "new@example.com");
+    await page.click("#next");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "inlineIdStep").at(-1)?.username).toBe("new@example.com");
+    await page.close();
+  });
+
+  it("remembers an id picked from the list once it's submitted", async () => {
+    const page = await open("/id-step");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    await expect.poll(() => page.inputValue("#user")).toBe("alice");
+    await page.click("#next");
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "inlineIdStep").at(-1)?.username).toBe("alice");
+    await page.close();
+  });
+
+  it("offers and fills inside a closed shadow root", async () => {
+    const page = await open("/closed-shadow");
+    const box = (await page.locator("#host").boundingBox())!;
+    await page.mouse.click(box.x + 20, box.y + 8);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    expect(await page.evaluate(() => (document.getElementById("host") as any).__closed.querySelector("#user").value)).toBe("alice");
+    await page.close();
+  });
+
+  it("offers to save after a click on a button inside a closed shadow root", async () => {
+    const page = await open("/closed-shadow");
+    await page.evaluate(() => {
+      const root = (document.getElementById("host") as any).__closed;
+      root.querySelector("#user").value = "alice";
+      root.querySelector("#pw").value = "hunter2-Test!";
+    });
+    const box = (await page.locator("#host").boundingBox())!;
+    await page.mouse.click(box.x + 20, box.y + box.height - 10);
+    await expect.poll(async () => (await sent(page)).filter((m) => m.type === "offerSave").at(-1)).toMatchObject({ username: "alice", password: "hunter2-Test!" });
+    await page.close();
+  });
+
+  it("clears a pick from an earlier page when the id is edited on a fresh load", async () => {
+    const page = await open("/signin/scenes");
+    await page.evaluate(() => ((window as any).__picked = "alice"));
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.keyboard.type("x");
+    await expect.poll(() => page.evaluate(() => (window as any).__picked)).toBeUndefined();
+    await page.close();
+  });
+
+  it("keeps the whole list on the id field while a pick is remembered", async () => {
+    const page = await open("/signin/scenes");
+    await page.evaluate(() => ((window as any).__picked = "alice"));
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 2);
+    expect(await page.inputValue("#user")).toBe("bob@example.com");
+    await page.close();
+  });
+
+  it("keeps the pick when focus leaves the id field and comes back", async () => {
+    const page = await open("/signin/scenes");
+    await page.click("#user");
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await choose(page, 1);
+    await page.mouse.click(5, 400);
+    await page.click("#user");
+    await page.waitForTimeout(100);
+    expect((await sent(page)).filter((m) => m.type === "inlinePick")).toEqual([{ type: "inlinePick", username: "alice" }]);
+    await page.close();
+  });
+
+  it("puts the key button in a code field, and the key says so when no code is saved", async () => {
+    const page = await open("/code-field");
+    await page.evaluate(() => ((window as any).__noCodes = true));
+    await page.click("#c");
+    await expect.poll(() => page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(true);
+    await page.waitForTimeout(150);
+    expect(await dropdownShown(page)).toBe(false);
+    const key = await page.evaluate(() => {
+      const r = document.querySelector("icloudkeys-key")!.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.click(key.x, key.y);
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.close();
+  });
+
+  it("asks for the password once when the shadow fields can take it", async () => {
+    const page = await open("/shadow-login");
+    await page.click('input[name="username"]');
+    await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.mouse.click(...(Object.values(await firstRow(page)) as [number, number]));
+    expect(await fills(page)).toEqual([{ type: "inlineFill", username: "alice" }]);
     await page.close();
   });
 

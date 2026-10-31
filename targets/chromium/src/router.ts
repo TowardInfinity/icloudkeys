@@ -38,8 +38,10 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "inlineStatus",
   "inlineLogins",
   "inlineFill",
+  "inlinePick",
   "inlineCodes",
   "inlineFillCode",
+  "inlineIdStep",
   "offerSave",
   "signInOutcome",
   "openPopup",
@@ -48,6 +50,8 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "hmeReserve",
 ]);
 
+// long enough for a captcha between a login's steps
+const PICK_TTL_MS = 10 * 60_000;
 // a listed code is picked within seconds; past this the list is stale and a TOTP has rotated
 const CODE_LIST_TTL_MS = 2 * 60_000;
 // one alias per page per interval, so a page script can't fill the user's alias list
@@ -92,6 +96,8 @@ export function createRouter(env: RouterEnv) {
   const { client } = env;
   const now = () => env.now?.() ?? Date.now();
   const codesByTab = new Map<number, { at: number; entries: OneTimeCode[]; target: FrameTarget }>();
+  const picks = new Map<number, { at: number; host: string; username: string }>();
+  const idSteps = new Map<number, { at: number; host: string; username: string }>();
   const hmeAt = new Map<number, number>();
   const hmeGeneratedAt = new Map<number, number>();
   // the address shown to each tab; a page can only ever reserve the one we generated for it
@@ -142,6 +148,18 @@ export function createRouter(env: RouterEnv) {
     return { tabId: tab.id, frameId: 0, host, frameUrls: [tab.url!] };
   }
 
+  /** The ID submitted on the page before, once. A filled pick never names a save: it may be an old account's. */
+  function takeIdStep(at: Where): string {
+    const step = idSteps.get(at.tabId);
+    idSteps.delete(at.tabId);
+    return step && step.host === at.host && now() - step.at < PICK_TTL_MS ? step.username : "";
+  }
+
+  function livePick(at: Where): string | undefined {
+    const pick = picks.get(at.tabId);
+    return pick && pick.host === at.host && now() - pick.at < PICK_TTL_MS ? pick.username : undefined;
+  }
+
   async function fillLogin(at: Where, username: string): Promise<Response> {
     const cred = await client.getPassword(at.tabId, at.host, username);
     if (!cred) throw new Refused("login not found for this site");
@@ -152,6 +170,7 @@ export function createRouter(env: RouterEnv) {
       password: cred.password,
     });
     if (!res?.filled) throw new Refused(res?.error ?? "no login fields to fill on this page");
+    picks.set(at.tabId, { at: now(), host: at.host, username: cred.username });
     return { ok: true, status: status() };
   }
 
@@ -161,7 +180,8 @@ export function createRouter(env: RouterEnv) {
     const { entries, requiresAuth } = await client.getOneTimeCodes(target);
     codesByTab.set(at.tabId, { at: now(), entries, target });
     const codes: CodeRow[] = entries.map((e, id) => ({ id, source: e.source, username: e.username, domain: e.domain }));
-    return { ok: true, status: status(), codes, requiresAuth };
+    const picked = livePick(at);
+    return { ok: true, status: status(), codes, requiresAuth, ...(picked ? { picked } : {}) };
   }
 
   /** The value of a listed code, re-read for TOTP so a rotated one is never filled. */
@@ -273,9 +293,22 @@ export function createRouter(env: RouterEnv) {
       case "inlineLogins":
         await checkHme();
         if (!client.ready) return { ok: true, status: status(), logins: [] };
-        return { ok: true, status: status(), logins: await client.getLoginNames(at.tabId, at.host) };
+        {
+          const logins = await client.getLoginNames(at.tabId, at.host);
+          const picked = livePick(at);
+          return { ok: true, status: status(), logins, ...(picked && logins.some((l) => l.username === picked) ? { picked } : {}) };
+        }
       case "inlineFill":
         return fillLogin(at, String(req.username ?? ""));
+      case "inlinePick": {
+        const username = String(req.username ?? "");
+        if (username) picks.set(at.tabId, { at: now(), host: at.host, username });
+        else {
+          picks.delete(at.tabId);
+          idSteps.delete(at.tabId);
+        }
+        return { ok: true, status: status() };
+      }
       case "inlineCodes":
         return listCodes(at);
       case "inlineFillCode": {
@@ -284,8 +317,15 @@ export function createRouter(env: RouterEnv) {
         if (!res?.filled) throw new Refused(res?.error ?? "no code field to fill");
         return { ok: true, status: status() };
       }
+      case "inlineIdStep": {
+        const username = String(req.username ?? "").trim();
+        if (!username) return { ok: true, status: status() };
+        idSteps.set(at.tabId, { at: now(), host: at.host, username });
+        picks.set(at.tabId, { at: now(), host: at.host, username });
+        return { ok: true, status: status() };
+      }
       case "offerSave": {
-        const save = { at: now(), host: at.host, frameId: at.frameId, username: String(req.username ?? "").trim(), password: String(req.password ?? ""), isNew: !!req.isNew };
+        const save = { at: now(), host: at.host, frameId: at.frameId, username: String(req.username ?? "").trim() || takeIdStep(at), password: String(req.password ?? ""), isNew: !!req.isNew };
         if (!save.password) throw new Refused("no password");
         if (req.afterSignIn) heldSaves.set(at.tabId, save);
         else await saveLogin(at.tabId, save);
