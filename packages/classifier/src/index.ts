@@ -7,7 +7,7 @@
 
 const OTP_AUTOCOMPLETE = /one-time-code/i;
 const OTP_HINT =
-  /\b(otp|totp|one[\s-]?time|verification|2fa|mfa|sms[\s-]?code|auth[\s-]?code|security[\s-]?code|passcode|authenticator|two[\s-]?factor|enter (the )?code)\b/i;
+  /\b(otp|totp|one[\s-]?time|verification|2fa|mfa|sms[\s-]?code|auth[\s-]?code|security[\s-]?code|login[\s-]?code|magic[\s-]?code|passcode|authenticator|two[\s-]?factor|enter (the )?code)\b/i;
 // matched against names split into words: totpPin, otpCode, app_otp, verification_pin, otc
 const OTP_NAME = /\b(otp|totp|otc|2fa|mfa|(verification|auth|sms) (code|pin))\b/i;
 const CARD_FIELD = /\b(cvv|cvc|csc|card)\b/i;
@@ -635,7 +635,7 @@ export function fillNewPassword(field: HTMLInputElement, password: string): HTML
   return [...targets];
 }
 
-function otpBoxGroup(el: HTMLInputElement): HTMLInputElement[] | null {
+export function otpBoxGroup(el: HTMLInputElement): HTMLInputElement[] | null {
   const inputs = allInputs(formAround(el) ?? document).filter((i) => isVisible(i) && !i.disabled && !i.readOnly);
   const single = inputs.filter((i) => i.getAttribute("maxlength") === "1");
   // some sites clamp length in script, but still tag every box one-time-code

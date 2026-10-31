@@ -213,6 +213,8 @@ describe("forms", () => {
     ["LinkedIn", `<input id="e" name="verification_pin">`, true],
     ["Microsoft", `<input id="e" type="tel" name="otc">`, true],
     ["camelCase", `<input id="e" name="verificationCode">`, true],
+    ["emailed login code", `<input id="e" aria-label="Login code">`, true],
+    ["emailed magic code", `<input id="e" name="magicCode">`, true],
     ["card security code by autocomplete", `<input id="e" autocomplete="cc-csc" aria-label="Security code">`, false],
     ["card security code by name", `<input id="e" name="cardSecurityCode" aria-label="Security code">`, false],
     ["cvv", `<input id="e" name="cvv" aria-label="Security code">`, false],
