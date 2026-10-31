@@ -412,6 +412,30 @@ describe("Hide My Email availability", () => {
   });
 });
 
+describe("Hide My Email sign-in", () => {
+  it("rechecks at once when the popup opens after a sign-in, with no wait", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeStatus" }, popup);
+    advance(5 * 60_000 + 1);
+    hme.session.mockResolvedValueOnce({ available: false, reason: "not-signed-in" } as any);
+    expect(await handle({ type: "hmeStatus" }, popup)).toMatchObject({ hme: { available: false, reason: "not-signed-in" } });
+    advance(1_000);
+    expect(await handle({ type: "hmeStatus" }, popup)).toMatchObject({ hme: { available: true } });
+  });
+
+  it("still waits out a rate limit", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeStatus" }, popup);
+    advance(5 * 60_000 + 1);
+    hme.session.mockResolvedValueOnce({ available: false, reason: "rate-limited" } as any);
+    await handle({ type: "hmeStatus" }, popup);
+    const calls = hme.session.mock.calls.length;
+    advance(1_000);
+    expect(await handle({ type: "hmeStatus" }, popup)).toMatchObject({ hme: { available: false, reason: "rate-limited" } });
+    expect(hme.session).toHaveBeenCalledTimes(calls);
+  });
+});
+
 describe("popup", () => {
   it("fills the active tab's top frame", async () => {
     const { handle, sent } = await setup();

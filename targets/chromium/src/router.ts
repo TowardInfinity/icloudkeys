@@ -271,6 +271,8 @@ export function createRouter(env: RouterEnv) {
         return { ok: true, status: status() };
       }
       case "hmeStatus": {
+        // opening the popup is rare and the user may have just signed in, so nothing to wait out
+        if (hmeSession?.value.reason === "not-signed-in") hmeSession = undefined;
         const hme = await checkHme();
         return { ok: true, status: status(), hme };
       }
