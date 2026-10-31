@@ -58,6 +58,17 @@ const PAGES: Record<string, string> = {
       <input id="user" name="identifier" autocomplete="username webauthn" aria-label="Email or phone">
       <input type="password" name="hiddenPassword" tabindex="-1" aria-hidden="true" style="display:none">
       <button type="button">Create account</button><button type="button">Next</button></form>`,
+  "/paste-boxes": `<div style="display:flex">${[0, 1, 2, 3].map((i) => `<input id="p${i}" type="number" autocomplete="${i ? "off" : "one-time-code"}" aria-label="Please enter OTP character ${i + 1}" style="width:62px">`).join("")}</div>
+    <script>
+      window.__pastes = 0;
+      const boxes = [...document.querySelectorAll("input")];
+      boxes.forEach((box, at) => box.addEventListener("paste", (e) => {
+        e.preventDefault();
+        window.__pastes++;
+        const text = e.clipboardData.getData("text/plain").slice(0, boxes.length - at).split("");
+        for (let i = at; i < boxes.length && text.length; i++) boxes[i].value = text.shift();
+      }));
+    </script>`,
   "/email-login": `<form onsubmit="event.preventDefault()"><input id="email" type="email" name="email" autocomplete="username">
       <input id="pw" type="password" name="password" autocomplete="current-password"><button>Sign in</button></form>`,
   "/plain-email": `<form onsubmit="event.preventDefault()"><input id="email" type="email" autocomplete="username"><button>Next</button></form>`,
@@ -1387,6 +1398,50 @@ describe("regressions", () => {
     await expect.poll(clear).toBe(true);
     expect(await page.evaluate(() => document.querySelectorAll("icloudkeys-key").length)).toBe(1);
     await page.close();
+  });
+
+  describe("a code pasted into a row of boxes", () => {
+    const paste = async (at: string, text: string) => {
+      const page = await open("/paste-boxes");
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
+      await page.evaluate((t) => navigator.clipboard.writeText(t), text);
+      await page.click(at);
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      const values = () => page.$$eval("input", (els) => els.map((e) => (e as HTMLInputElement).value));
+      return { page, values };
+    };
+
+    it.each(["#p1", "#p3"])("fills the whole row from %s, where the page would cut it short", async (at) => {
+      const { page, values } = await paste(at, "4821");
+      await expect.poll(values).toEqual(["4", "8", "2", "1"]);
+      await page.close();
+    });
+
+    it("leaves a paste into the first box to the page", async () => {
+      const { page, values } = await paste("#p0", "4821");
+      await expect.poll(values).toEqual(["4", "8", "2", "1"]);
+      expect(await page.evaluate(() => (window as any).__pastes)).toBe(1);
+      await page.close();
+    });
+
+    it.each([["shorter than the row", "48"], ["longer than the row", "482159"], ["not digits, in number boxes", "ABCD"]])("leaves a paste %s to the page", async (_, text) => {
+      const { page } = await paste("#p3", text);
+      await expect.poll(() => page.evaluate(() => (window as any).__pastes)).toBe(1);
+      await page.close();
+    });
+
+    it("ignores a paste the page made up", async () => {
+      const page = await open("/paste-boxes");
+      await page.click("#p3");
+      await page.evaluate(() => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", "4821");
+        document.querySelector("#p3")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+      });
+      expect(await page.evaluate(() => (window as any).__pastes)).toBe(1);
+      expect(await page.inputValue("#p0")).toBe("");
+      await page.close();
+    });
   });
 
   it("fills a code across a row of boxes that set no length", async () => {

@@ -652,7 +652,7 @@ export function otpBoxGroup(el: HTMLInputElement): HTMLInputElement[] | null {
   return null;
 }
 
-/** Fills a code into one field, or across a row of single-character boxes starting at `field`. */
+/** Fills a code into one field, or across a row of single-character boxes. */
 export function fillOneTimeCode(field: HTMLInputElement, code: string): void {
   const chars = code.replace(/[^A-Za-z0-9]/g, "").split("");
   const boxes = otpBoxGroup(field);
@@ -660,7 +660,9 @@ export function fillOneTimeCode(field: HTMLInputElement, code: string): void {
     setFieldValue(field, chars.join(""));
     return;
   }
-  const start = Math.max(0, boxes.indexOf(field));
+  // the user may be on any box of the row, and a code that fills it belongs from the first;
+  // a longer row can hold more than the code's boxes, so there the user's box says where it starts
+  const start = chars.length >= boxes.length ? 0 : Math.max(0, boxes.indexOf(field));
   chars.forEach((c, i) => {
     const box = boxes[start + i];
     if (!box) return;
