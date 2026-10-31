@@ -1,5 +1,8 @@
 {
   "name": "@icloudkeys/core",
+  "version": "0.1.0",
+  "description": "SRP-6a protocol, AES-GCM crypto, and password generation for Apple Passwords helper",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },

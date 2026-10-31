@@ -1,6 +1,27 @@
 {
   "name": "icloudkeys",
   "version": "0.1.0",
+  "description": "Apple Passwords (iCloud Keychain) and Hide My Email for Chromium browsers on macOS",
+  "license": "Apache-2.0",
+  "author": "Md Mobshshir Nayeem <mdmobshshir@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TowardInfinity/icloudkeys.git"
+  },
+  "homepage": "https://github.com/TowardInfinity/icloudkeys#readme",
+  "bugs": {
+    "url": "https://github.com/TowardInfinity/icloudkeys/issues"
+  },
+  "keywords": [
+    "apple-passwords",
+    "icloud-keychain",
+    "hide-my-email",
+    "chromium-extension",
+    "macos",
+    "brave",
+    "chrome",
+    "passwords"
+  ],
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.15.0",
@@ -10,7 +31,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "package:extension": "pnpm build && (cd targets/chromium/dist && zip -rq ../../../icloudkeys-v0.1.0.zip .)"
   },
   "devDependencies": {
     "@types/chrome": "0.3.6",

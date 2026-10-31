@@ -56,7 +56,7 @@ const manifest = {
   manifest_version: 3,
   name: NAME,
   version: pkg.version ?? "0.1.0",
-  description: "Apple Passwords (iCloud Keychain) for Chromium browsers on macOS. Not affiliated with Apple.",
+  description: "Apple Passwords (iCloud Keychain) and Hide My Email for Chromium browsers on macOS. Not affiliated with Apple.",
   key,
   background: { service_worker: "background.js", type: "module" },
   icons,

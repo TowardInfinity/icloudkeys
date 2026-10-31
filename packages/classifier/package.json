@@ -1,5 +1,8 @@
 {
   "name": "@icloudkeys/classifier",
+  "version": "0.1.0",
+  "description": "Form and input field classification heuristics for login, password, email, and OTP fields",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
