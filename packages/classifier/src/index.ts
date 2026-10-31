@@ -497,7 +497,7 @@ export function isNewPasswordField(el: Element): boolean {
   return signupScore(scope) + (ac.includes("new-password") ? 3 : 0) > 0;
 }
 
-function isEmailish(el: HTMLInputElement): boolean {
+export function isEmailish(el: HTMLInputElement): boolean {
   if (el.type === "email" || attr(el, "autocomplete").split(/\s+/).includes("email")) return true;
   return (el.type === "text" || el.type === "") && /e-?mail/i.test(attrBlob(el));
 }
