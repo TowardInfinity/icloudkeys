@@ -606,6 +606,23 @@ function maybeOfferSave(scope: ParentNode): void {
   if (afterSignIn) watchSignIn();
 }
 
+// widgets take a pasted code from the focused box onward, so from box 4 of 4 only one digit lands
+document.addEventListener(
+  "paste",
+  (e) => {
+    const field = deepFocused(e.composedPath()[0] ?? null);
+    if (!e.isTrusted || !(field instanceof HTMLInputElement) || !isOtpField(field)) return;
+    const boxes = otpBoxGroup(field);
+    if (!boxes || boxes.indexOf(field) <= 0) return;
+    const code = e.clipboardData?.getData("text/plain").trim() ?? "";
+    const shape = field.type === "number" ? /^\d+$/ : /^[A-Za-z0-9]+$/;
+    if (code.length !== boxes.length || !shape.test(code)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    fillOneTimeCode(field, code);
+  },
+  true,
+);
 document.addEventListener(
   "submit",
   (e) => {
