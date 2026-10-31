@@ -31,6 +31,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "benchmark": "pnpm --filter @icloudkeys/classifier benchmark",
     "typecheck": "pnpm -r typecheck",
     "package:extension": "pnpm build && (cd targets/chromium/dist && zip -rq ../../../icloudkeys-v0.1.0.zip .)"
   },

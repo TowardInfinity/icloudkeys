@@ -1,0 +1,13 @@
+{
+  "login: a fill lands in the right fields": 93.5,
+  "login: password field is offered": 99,
+  "any: a current password is not taken for a new one": 94.8,
+  "login: id field is offered": 88.3,
+  "login: password is not taken for a new one": 93.1,
+  "login: email gets no Hide My Email": 86.2,
+  "signup: new password is recognised": 89.9,
+  "signup: email gets Hide My Email": 91.7,
+  "any: name, address, card get no login offer": 99.8,
+  "any: name, address, card aren't taken for a code": 100,
+  "any: unlabelled inputs get no login offer": 96.8
+}
