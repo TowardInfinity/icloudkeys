@@ -69,6 +69,9 @@ const PAGES: Record<string, string> = {
         for (let i = at; i < boxes.length && text.length; i++) boxes[i].value = text.shift();
       }));
     </script>`,
+  "/apple-login": `<form onsubmit="event.preventDefault()"><input id="user" name="username" autocomplete="username">
+      <input id="pw" type="password" name="password" autocomplete="current-password"><button>Sign in</button></form>
+    <button id="apple" onclick="window.__appleClicks = (window.__appleClicks ?? 0) + 1">Sign in with Apple</button>`,
   "/email-login": `<form onsubmit="event.preventDefault()"><input id="email" type="email" name="email" autocomplete="username">
       <input id="pw" type="password" name="password" autocomplete="current-password"><button>Sign in</button></form>`,
   "/plain-email": `<form onsubmit="event.preventDefault()"><input id="email" type="email" autocomplete="username"><button>Next</button></form>`,
@@ -1440,6 +1443,82 @@ describe("regressions", () => {
       });
       expect(await page.evaluate(() => (window as any).__pastes)).toBe(1);
       expect(await page.inputValue("#p0")).toBe("");
+      await page.close();
+    });
+  });
+
+  describe("Continue with Apple", () => {
+    const clicks = (page: Page) => page.evaluate(() => (window as any).__appleClicks ?? 0);
+    const openList = async (path: string, logins: unknown[] = []) => {
+      const page = await open(path);
+      await page.evaluate((l) => ((window as any).__logins = l), logins);
+      await page.click("#user");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      return page;
+    };
+
+    it("clicks the site's button when picked, once, and fills nothing", async () => {
+      const page = await openList("/apple-login");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect(await clicks(page)).toBe(1);
+      expect(await fills(page)).toEqual([]);
+      expect(await page.inputValue("#user")).toBe("");
+      await page.close();
+    });
+
+    it("clicks nothing until the user picks it", async () => {
+      const page = await openList("/apple-login");
+      await page.waitForTimeout(300);
+      expect(await clicks(page)).toBe(0);
+      await page.close();
+    });
+
+    it("sits below saved logins", async () => {
+      const page = await openList("/apple-login", [{ username: "alice", sites: ["example.com"] }]);
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect(await clicks(page)).toBe(0);
+      expect((await sent(page)).map((m) => m.type)).toContain("inlinePick");
+      await page.close();
+    });
+
+    it("is offered while the extension is locked", async () => {
+      const page = await open("/apple-login");
+      await page.evaluate(() => ((window as any).__reply.status.state = "needs_pin"));
+      await page.click("#user");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect(await clicks(page)).toBe(1);
+      await page.close();
+    });
+
+    it("clicks nothing if the button left the page before the pick", async () => {
+      const page = await openList("/apple-login");
+      await page.evaluate(() => document.getElementById("apple")!.remove());
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect(await clicks(page)).toBe(0);
+      await page.close();
+    });
+
+    it("goes away once the user types", async () => {
+      const page = await openList("/apple-login");
+      await page.keyboard.type("a");
+      await expect.poll(() => dropdownShown(page)).toBe(false);
+      await page.close();
+    });
+
+    it("isn't offered on a page with no such button", async () => {
+      const page = await open("/login");
+      await page.evaluate(() => ((window as any).__logins = []));
+      await page.click("#user");
+      await page.waitForTimeout(200);
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect((await sent(page)).map((m) => m.type)).toContain("inlineLaunch");
       await page.close();
     });
   });

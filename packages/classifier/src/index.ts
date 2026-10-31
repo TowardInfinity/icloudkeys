@@ -45,7 +45,7 @@ const IFRAME_LOGIN_ALLOWLIST = [
   "corbado.io", "cyberark.cloud", "delinea.app", "descope.com", "descope.io", "discord.com",
   "dropbox.com", "duosecurity.com", "dynamicauth.com", "facebook.com", "finicity.com", "force.com",
   "forgeblocks.com", "forgerock.com", "forgerock.io", "frontegg.com", "fusionauth.io", "github.com",
-  "gitlab.com", "hanko.io", "idaptive.app", "jumpcloud.com", "kakao.com", "kinde.com", "klarna.com",
+  "gitlab.com", "hanko.io", "idaptive.app", "idmsa.apple.com", "jumpcloud.com", "kakao.com", "kinde.com", "klarna.com",
   "line.me", "link.com", "linkedin.com", "live.com", "loginradius.com", "magic.link",
   "microsoftonline.com", "mojoauth.com", "moneydesktop.com", "naver.com", "okta-emea.com", "okta.com",
   "oktapreview.com", "onelogin.com", "openlogin.com", "ory.sh", "oryapis.com", "paypal.com",
@@ -232,7 +232,7 @@ export function isLoginField(el: Element): el is HTMLInputElement {
   return hasStrongIdentitySignal(el) && loginishContext(el);
 }
 
-function isAllowlistedLoginHost(host: string): boolean {
+export function isAllowlistedLoginHost(host: string): boolean {
   host = host.toLowerCase();
   return IFRAME_LOGIN_ALLOWLIST.some((d) => host === d || host.endsWith("." + d));
 }
@@ -271,15 +271,44 @@ export function setFieldValue(el: HTMLInputElement, value: string): void {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function* deepElements(root: ParentNode): Generator<Element> {
+  for (const el of root.querySelectorAll("*")) {
+    yield el;
+    const inner = shadowOf(el);
+    if (inner) yield* deepElements(inner);
+  }
+}
+
 /** Every input in page order, through open shadow roots: reddit gives each field its own root. */
 export function allInputs(root: ParentNode = document): HTMLInputElement[] {
   const inputs: HTMLInputElement[] = [];
-  for (const el of root.querySelectorAll("*")) {
-    if (el instanceof HTMLInputElement) inputs.push(el);
-    const inner = shadowOf(el);
-    if (inner) inputs.push(...allInputs(inner));
-  }
+  for (const el of deepElements(root)) if (el instanceof HTMLInputElement) inputs.push(el);
   return inputs;
+}
+
+const CONTROL = 'button, a[href], [role="button"], [role="link"], input[type="button"], input[type="submit"]';
+const APPLE_SIGN_IN = /^(sign[ -]?(in|up)|log[ -]?in|continue|register) (with|using|via) apple( id)?$/i;
+
+const opensAppleSignIn = (el: Element) =>
+  el instanceof HTMLAnchorElement && el.hostname === "appleid.apple.com" && el.pathname.startsWith("/auth/authorize");
+
+function controlName(el: Element): string {
+  const value = el instanceof HTMLInputElement ? el.value : "";
+  const name = el.getAttribute("aria-label") || el.textContent?.trim() || value || el.getAttribute("title") || "";
+  return name.replace(/\s+/g, " ").trim();
+}
+
+/** The site's own Sign in with Apple control, matched whole so "Sign in with Apple Music" stays out. */
+export function appleSignInControl(root: ParentNode = document): HTMLElement | null {
+  let scriptContainer: HTMLElement | null = null;
+  for (const el of deepElements(root)) {
+    if (!(el instanceof HTMLElement) || !isVisible(el)) continue;
+    if (el.matches(":disabled") || el.getAttribute("aria-disabled") === "true") continue;
+    if (el.id === "appleid-signin") scriptContainer ??= el;
+    else if (el.matches(CONTROL) && (APPLE_SIGN_IN.test(controlName(el)) || opensAppleSignIn(el))) return el;
+  }
+  // Apple's script draws its button inside this element, so a control found in it is preferred
+  return scriptContainer;
 }
 
 let readClosedRoot: (el: Element) => ShadowRoot | null = () => null;
