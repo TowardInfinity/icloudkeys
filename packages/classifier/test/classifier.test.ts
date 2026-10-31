@@ -386,6 +386,51 @@ describe("forms", () => {
     expect(got).toBe(expected);
   });
 
+  it("trusts Apple's embedded login hosts and not look-alikes", async () => {
+    const got = await withBody("", () =>
+      ["idmsa.apple.com", "appleid.apple.com", "apple.com", "idmsa.apple.com.example.net"].map((h) =>
+        (globalThis as any).Classifier.isAllowlistedLoginHost(h),
+      ),
+    );
+    expect(got).toEqual([true, true, false, false]);
+  });
+
+  describe("finding a site's Sign in with Apple control", () => {
+    const found = (html: string) => withBody(html, () => (globalThis as any).Classifier.appleSignInControl()?.id ?? null);
+
+    it.each([
+      ["a button", '<button id="hit">Sign in with Apple</button>'],
+      ["other wording", '<button id="hit">  Continue   with Apple </button>'],
+      ["an icon button named by its label", '<button id="hit" aria-label="Log in with Apple"><svg width="20" height="20"></svg></button>'],
+      ["a role=button", '<div id="hit" role="button" style="height:30px">Sign up with Apple</div>'],
+      ["Apple's own script's element", '<div id="appleid-signin" data-color="black" style="height:30px"></div>'],
+      ["a link to Apple's sign-in in any language", '<a id="hit" href="https://appleid.apple.com/auth/authorize?client_id=x">Mit Apple anmelden</a>'],
+    ])("finds %s", async (_, html) => {
+      expect(await found(html)).not.toBeNull();
+    });
+
+    it.each([
+      ["another Apple product", "<button>Sign in with Apple Music</button>"],
+      ["a mention in a sentence", "<button>Why we sign in with Apple devices</button>"],
+      ["plain text", "<p>Sign in with Apple</p>"],
+      ["a hidden button", '<button style="display:none">Sign in with Apple</button>'],
+      ["a disabled button", "<button disabled>Sign in with Apple</button>"],
+      ["another page on Apple's host", '<a href="https://appleid.apple.com/account/manage">Manage your Apple ID</a>'],
+      ["a look-alike host", '<a href="https://appleid.apple.com.example.net/auth/authorize">Anmelden</a>'],
+    ])("ignores %s", async (_, html) => {
+      expect(await found(html)).toBeNull();
+    });
+
+    it("finds one inside a shadow root", async () => {
+      const got = await withBody('<div id="host"></div>', () => {
+        const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+        root.innerHTML = '<button id="hit">Continue with Apple</button>';
+        return (globalThis as any).Classifier.appleSignInControl()?.id ?? null;
+      });
+      expect(got).toBe("hit");
+    });
+  });
+
   it.each([0, 1, 3])("fills the whole row when the user was on box %i", async (at) => {
     const got = await withBody(`<div data-at="${at}">` + '<input maxlength="1" style="width:48px">'.repeat(4) + "</div>", () => {
       const boxes = Array.from(document.querySelectorAll("input"));

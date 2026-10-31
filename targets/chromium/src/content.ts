@@ -1,5 +1,6 @@
 import {
   allInputs,
+  appleSignInControl,
   classifyFocus,
   clickedElement,
   collectSubmitted,
@@ -170,6 +171,14 @@ let toldPick: string | undefined;
 // one per click + submit + Enter burst
 let toldIdStep: string | undefined;
 
+// the page drew that button, so the row says whose it is instead of vouching for it
+const appleRow: Row = {
+  label: "Continue with Apple",
+  detail: "Uses this site's button",
+  icon: "app",
+  onPick: () => appleSignInControl()?.click(),
+};
+
 function rowsFor(current: Offer): Row[] {
   const { field, isLogin, res, generated } = current;
   // only a user name narrows the list; a password field holds a secret, not a prefix
@@ -182,12 +191,13 @@ function rowsFor(current: Offer): Row[] {
   const saved = isLogin && res?.ok ? (res.logins ?? []).map((l) => l.username.toLowerCase()) : [];
   const existing = (current.addresses ?? []).filter((a) => a.toLowerCase().startsWith(typed) && !saved.includes(a.toLowerCase()));
   const hide = [...existing.map((address) => existingAddressRow(field, address)), ...create];
+  const apple = !value.trim() && (isLogin || purpose) && appleSignInControl() ? [appleRow] : [];
   const rows: Row[] = [...generated];
   // an email field that isn't a login's (checkout, newsletter) never gets login rows
-  if (!isLogin) return [...rows, ...hide];
+  if (!isLogin) return [...rows, ...hide, ...apple];
   const locked = lockedRows(res);
-  if (locked) return [...rows, ...hide, ...locked];
-  if (!(res?.ok && res.status.state === "unlocked")) return [...rows, ...hide];
+  if (locked) return [...rows, ...hide, ...locked, ...apple];
+  if (!(res?.ok && res.status.state === "unlocked")) return [...rows, ...hide, ...apple];
   const typedLogins = (res.logins ?? []).filter((l) => !typed || matches(l.username, typed));
   // the password step of a login whose id is settled, by a pick or the page naming the account;
   // the rest stay one row away
@@ -226,6 +236,7 @@ function rowsFor(current: Offer): Row[] {
       },
     });
   }
+  rows.push(...apple);
   rows.push({
     label: "Open Passwords App",
     detail: res.logins?.length ? undefined : "Look up and create passwords.",

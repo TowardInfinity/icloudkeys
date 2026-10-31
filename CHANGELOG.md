@@ -10,6 +10,8 @@ User-visible changes to iCloudKeys. The format follows [Keep a Changelog](https:
 - Open the iCloud sign-in from the popup's Hide My Email row.
 - Show the key beside split code boxes.
 - Handle more login flows: ID and password on separate pages, and more sign-in wording.
+- Offer "Continue with Apple" on an empty sign-in field when the site has that button. Picking it clicks the site's button.
+- Treat Apple's `idmsa.apple.com` sign-in frame as a known embedded login.
 
 ### Changed
 
