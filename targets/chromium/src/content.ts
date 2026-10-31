@@ -16,6 +16,7 @@ import {
   isLoginField,
   isNewPasswordField,
   isOtpField,
+  otpBoxGroup,
   isPasswordField,
   isSubmitControl,
   isUsernameField,
@@ -319,7 +320,7 @@ function consider(field: EventTarget | null, onFocus = false): void {
     if (kind === "otp") codeAnchor = field as HTMLInputElement;
     return;
   }
-  if ((kind === "login" || kind === "otp") && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
+  if ((kind === "login" || kind === "otp") && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement), kind === "otp" ? otpBoxGroup(field as HTMLInputElement)?.at(-1) : undefined);
   else keyButton.hide();
   // a filled field (by us, or by the user) doesn't need the list in the way; a click, ArrowDown
   // or the key button still brings it up

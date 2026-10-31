@@ -59,6 +59,7 @@ const PAGES: Record<string, string> = {
       <input type="password" name="hiddenPassword" tabindex="-1" aria-hidden="true" style="display:none">
       <button type="button">Create account</button><button type="button">Next</button></form>`,
   "/plain-email": `<form onsubmit="event.preventDefault()"><input id="email" type="email" autocomplete="username"><button>Next</button></form>`,
+  "/split-code": `<title>Enter verification code</title><form onsubmit="event.preventDefault()"><div style="display:flex;gap:8px"><input id="b0" name="code_0" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 1 of 6" style="width:60px;box-sizing:border-box"><input id="b1" name="code_1" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 2 of 6" style="width:60px;box-sizing:border-box"><input id="b2" name="code_2" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 3 of 6" style="width:60px;box-sizing:border-box"><input id="b3" name="code_3" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 4 of 6" style="width:60px;box-sizing:border-box"><input id="b4" name="code_4" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 5 of 6" style="width:60px;box-sizing:border-box"><input id="b5" name="code_5" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 6 of 6" style="width:60px;box-sizing:border-box"></div></form>`,
   "/code-field": `<title>Sign in</title><input id="c" type="tel" name="totpPin" autocomplete="off" aria-label="Enter code" pattern="[0-9 ]*">`,
   "/shown-account": `<div data-profile-identifier>bob@example.com</div><form onsubmit="event.preventDefault()"><input id="pw" type="password" autocomplete="current-password"></form>`,
   "/shown-unknown": `<div data-profile-identifier>nobody@example.com</div><form onsubmit="event.preventDefault()"><input id="pw" type="password" autocomplete="current-password"></form>`,
@@ -1249,6 +1250,32 @@ describe("regressions", () => {
     });
     await page.mouse.click(key.x, key.y);
     await expect.poll(() => dropdownShown(page)).toBe(true);
+    await page.close();
+  });
+
+  it("puts the key beside a row of code boxes too narrow to hold it", async () => {
+    const page = await open("/split-code");
+    await page.evaluate(() => ((window as any).__noCodes = true));
+    await page.click("#b0");
+    await expect.poll(() => page.evaluate(() => !!document.querySelector("icloudkeys-key"))).toBe(true);
+    const clear = () =>
+      page.evaluate(() => {
+        const key = document.querySelector("icloudkeys-key")!.getBoundingClientRect();
+        return key.left >= document.getElementById("b5")!.getBoundingClientRect().right;
+      });
+    await expect.poll(clear).toBe(true);
+    await page.click("#b3");
+    await expect.poll(clear).toBe(true);
+    expect(await page.evaluate(() => document.querySelectorAll("icloudkeys-key").length)).toBe(1);
+    await page.close();
+  });
+
+  it("fills a code across a row of boxes that set no length", async () => {
+    const page = await open("/split-code");
+    await page.click("#b0");
+    await page.evaluate(() => (window as any).__deliver({ type: "fillCode", expectedHost: "127.0.0.1", code: "123456" }, { id: "ext" }));
+    const values = await page.$$eval("input", (els) => els.map((e) => (e as HTMLInputElement).value).join(""));
+    expect(values).toBe("123456");
     await page.close();
   });
 

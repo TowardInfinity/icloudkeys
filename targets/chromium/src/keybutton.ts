@@ -14,6 +14,7 @@ button:hover { background: rgba(0,0,0,.08); color: #0a84ff; }
 export class KeyButton {
   private host: HTMLElement | undefined;
   private anchor: HTMLInputElement | undefined;
+  private beside: HTMLInputElement | undefined;
   private tracker: ReturnType<typeof setInterval> | undefined;
   private readonly onMove = () => this.position();
 
@@ -22,10 +23,11 @@ export class KeyButton {
     addEventListener("resize", this.onMove);
   }
 
-  show(anchor: HTMLInputElement, onPress: () => void): void {
+  /** `beside`: the last box of a row of code boxes, whose key sits past it rather than inside. */
+  show(anchor: HTMLInputElement, onPress: () => void, beside?: HTMLInputElement): void {
     this.hide();
     // too narrow to share with the text
-    if (anchor.getBoundingClientRect().width < 100) return;
+    if (!beside && anchor.getBoundingClientRect().width < 100) return;
     const host = document.createElement("icloudkeys-key");
     for (const [k, v] of Object.entries(HOST_STYLE)) host.style.setProperty(k, v, "important");
     const root = host.attachShadow({ mode: "closed" });
@@ -44,6 +46,7 @@ export class KeyButton {
     root.append(style, button);
     this.host = host;
     this.anchor = anchor;
+    this.beside = beside;
     mount(host, anchor);
     this.position();
     // fields move without a scroll or resize: animated dialogs, layout shifts, late banners
@@ -59,12 +62,15 @@ export class KeyButton {
     this.host?.remove();
     this.host = undefined;
     this.anchor = undefined;
+    this.beside = undefined;
   }
 
   private position(): void {
     if (!this.host || !this.anchor) return;
     if (!this.anchor.isConnected) return this.hide();
-    const r = this.anchor.getBoundingClientRect();
-    place(this.host, this.anchor, r.right - SIZE - 6, r.top + (r.height - SIZE) / 2);
+    const r = (this.beside?.isConnected ? this.beside : this.anchor).getBoundingClientRect();
+    const view = this.host.ownerDocument.defaultView!;
+    const left = this.beside ? Math.min(r.right + 6, view.innerWidth - SIZE - 4) : r.right - SIZE - 6;
+    place(this.host, this.anchor, left, r.top + (r.height - SIZE) / 2);
   }
 }
