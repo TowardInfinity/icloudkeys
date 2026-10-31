@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Apple Passwords (iCloud Keychain) and Hide My Email for Chromium browsers on macOS",
   "license": "Apache-2.0",
-  "author": "Md Mobshshir Nayeem <mdmobshshir@gmail.com>",
+  "author": "Md Mobshshir Nayeem",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TowardInfinity/icloudkeys.git"
