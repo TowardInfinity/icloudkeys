@@ -38,9 +38,10 @@ Derived vs original, by file:
                       checks in its src/background.js. The list's look and
                       behaviour, the key button, the toolbar icon states and
                       the settings page imitate Apple's iCloud Passwords
-                      extension and Safari by observation; no Apple code,
-                      CSS or images are included, and the icons are drawn
-                      for this project.
+                      extension and Safari, from studying the installed
+                      extension's files and observing its behaviour; no
+                      Apple code, CSS or images are included, and the icons
+                      are drawn for this project.
 
 Hide My Email endpoints and header rules are derived from:
 
