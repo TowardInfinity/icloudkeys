@@ -41,5 +41,5 @@ Thank you for your interest in contributing! iCloudKeys is an open-source client
 ## Guidelines
 
 - **Zero Secrets / Leaks:** Never commit credentials, private keys, or personal session data.
-- **Verification First:** Ensure `pnpm typecheck`, `pnpm test`, and `cargo test` pass before submitting a pull request.
+- **Verification First:** Ensure `pnpm typecheck`, `pnpm test`, and `cargo test` pass before submitting a pull request. If you change field detection, also run `pnpm benchmark`, which fails if a score drops. It downloads its test forms, so they never enter this repo.
 - **Attribution & Provenance:** Any derived algorithms or fixtures must be credited in `NOTICE` under their respective licenses.

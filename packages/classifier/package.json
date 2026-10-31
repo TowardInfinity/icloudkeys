@@ -8,6 +8,7 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": {
     "test": "vitest run",
+    "benchmark": "node scripts/benchmark.mjs",
     "typecheck": "tsc -p ."
   }
 }

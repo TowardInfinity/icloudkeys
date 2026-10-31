@@ -1,10 +1,17 @@
 import {
+  allInputs,
   classifyFocus,
+  clickedElement,
   collectSubmitted,
+  deepFocused,
+  emailPurpose,
   fillCredentials,
   fillNewPassword,
   fillOneTimeCode,
+  formAround,
   frameIsSafe,
+  hasPasswordTarget,
+  holds,
   isEmailField,
   isLoginField,
   isNewPasswordField,
@@ -13,14 +20,19 @@ import {
   isSubmitControl,
   isUsernameField,
   isVisible,
+  readShadowRootsWith,
   setFieldValue,
+  shownAccount,
+  submittedId,
 } from "@icloudkeys/classifier";
 import { alphanumericPasswordFor, complexPasswordFor, strongPasswordFor, type Login } from "@icloudkeys/core";
 import { Dropdown, type Row } from "./dropdown.ts";
 import { KeyButton } from "./keybutton.ts";
-import type { ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
+import type { CodeRow, ContentRequest, FillResult, Response, ToContent } from "./messages.ts";
 import { NAME } from "./name.ts";
 import { DEFAULTS, loadSettings, onSettingsChange } from "./settings.ts";
+
+readShadowRootsWith((el) => (el instanceof HTMLElement ? (chrome.dom?.openOrClosedShadowRoot(el) ?? null) : null));
 
 const dropdown = new Dropdown(NAME);
 const keyButton = new KeyButton(NAME);
@@ -56,6 +68,7 @@ interface Offer {
   isLogin: boolean;
   res: Response | undefined;
   generated: Row[];
+  showAll?: boolean;
 }
 let offer: Offer | undefined;
 
@@ -138,36 +151,60 @@ function matches(username: string, typed: string): boolean {
 
 const siteOf = (login: Login) => (login.sites[0] ?? location.hostname).replace(/^(www|m)\./, "");
 
-function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
+// what the background was last told on this page, so typing tells it only when that changes
+let toldPick: string | undefined;
+// one per click + submit + Enter burst
+let toldIdStep: string | undefined;
+
+function rowsFor(current: Offer): Row[] {
+  const { field, isLogin, res, generated } = current;
   // only a user name narrows the list; a password field holds a secret, not a prefix
   const value = field.value;
   const typed = isPasswordField(field) ? "" : value.trim().toLowerCase();
-  // what the field is for comes first: a new password, then a new address, then saved logins
+  const purpose = typed ? null : emailPurpose(field);
+  // otherwise the feature is invisible and nothing says why
+  const hide = !purpose ? [] : res?.status.canHideEmail ? [aliasRow(field)] : res?.status.hmeNeedsSignIn ? [signInRow] : [];
   const rows: Row[] = [...generated];
-  if (!typed && isEmailField(field)) {
-    if (res?.status.canHideEmail) rows.push(aliasRow(field));
-    // otherwise the feature is invisible and nothing says why
-    else if (res?.status.hmeNeedsSignIn) rows.push(signInRow);
-  }
   // an email field that isn't a login's (checkout, newsletter) never gets login rows
-  if (!isLogin) return rows;
+  if (!isLogin) return [...rows, ...hide];
   const locked = lockedRows(res);
-  if (locked) return [...rows, ...locked];
-  if (!(res?.ok && res.status.state === "unlocked")) return rows;
-  const logins = (res.logins ?? []).filter((l) => !typed || matches(l.username, typed));
+  if (locked) return [...rows, ...hide, ...locked];
+  if (!(res?.ok && res.status.state === "unlocked")) return [...rows, ...hide];
+  const typedLogins = (res.logins ?? []).filter((l) => !typed || matches(l.username, typed));
+  // the password step of a login whose id is settled, by a pick or the page naming the account;
+  // the rest stay one row away
+  const settled = isPasswordField(field) && !current.showAll ? (res.picked ?? shownAccount(field))?.toLowerCase() : undefined;
+  const narrowed = typedLogins.filter((l) => l.username.toLowerCase() === settled);
+  const logins = narrowed.length ? narrowed : typedLogins;
   // typing past every saved login closes the list, as in Safari
   if (typed && !logins.length && !rows.length) return [];
-  for (const login of logins) {
+  const loginRows = logins.map((login): Row => ({
+    label: login.username || "no user name",
+    detail: siteOf(login),
+    icon: "key",
+    onPick: () => {
+      loginAnchor = field;
+      toldPick = login.username;
+      // the helper can take seconds to hand over the password; the user name is already on
+      // screen, so it goes in now and the password follows
+      if (login.username && isUsernameField(field)) {
+        setFieldValue(field, login.username);
+        void send({ type: "inlinePick", username: login.username });
+        // a two-step login's first page: asking now would mean Touch ID here and again on the next page
+        if (!hasPasswordTarget(field)) return;
+      }
+      void send({ type: "inlineFill", username: login.username });
+    },
+  }));
+  // a page that doesn't say what it is, on a site with a saved login, is more likely a sign-in
+  rows.push(...(purpose === "signup" || !logins.length ? [...hide, ...loginRows] : [...loginRows, ...hide]));
+  if (logins.length < typedLogins.length) {
     rows.push({
-      label: login.username || "no user name",
-      detail: siteOf(login),
+      label: "Other Accounts",
       icon: "key",
       onPick: () => {
-        loginAnchor = field;
-        // the helper can take seconds to hand over the password; the user name is already on
-        // screen, so it goes in now and the password follows
-        if (login.username && isUsernameField(field)) setFieldValue(field, login.username);
-        void send({ type: "inlineFill", username: login.username });
+        current.showAll = true;
+        render();
       },
     });
   }
@@ -181,15 +218,25 @@ function rowsFor({ field, isLogin, res, generated }: Offer): Row[] {
   return rows;
 }
 
-async function offerCodes(field: HTMLInputElement): Promise<void> {
+/** `asked`: the user pressed the key, so an empty list gets an answer instead of silence. */
+async function offerCodes(field: HTMLInputElement, asked = false): Promise<void> {
   const seq = ++offerSeq;
   const res = await send({ type: "inlineCodes" });
   if (seq !== offerSeq) return;
   offer = undefined;
   // the last field's list must not stay up over this one
-  if (!res?.status.canFillCodes) return dropdown.close();
-  const rows: Row[] = lockedRows(res) ?? [];
-  for (const c of res.ok ? (res.codes ?? []) : []) {
+  if (!res?.status.canFillCodes && !asked) return dropdown.close();
+  showCodes(field, res, asked);
+}
+
+function showCodes(field: HTMLInputElement, res: Response | undefined, asked: boolean, showAll = false): void {
+  const rows: Row[] = res?.status.canFillCodes ? (lockedRows(res) ?? []) : [];
+  const all = res?.ok ? (res.codes ?? []) : [];
+  const picked = res?.ok && !showAll ? (res.picked ?? shownAccount(field))?.toLowerCase() : undefined;
+  const isPicked = (c: CodeRow) => c.source === "totp" && c.username.toLowerCase() === picked;
+  // messages aren't tied to an account; a pick with no code of its own hides nothing
+  const codes = all.some(isPicked) ? all.filter((c) => c.source !== "totp" || isPicked(c)) : all;
+  for (const c of codes) {
     rows.push({
       icon: "code",
       label: c.source === "totp" ? `Verification code${c.username ? ` for ${c.username}` : ""}` : "Code from Messages",
@@ -198,6 +245,17 @@ async function offerCodes(field: HTMLInputElement): Promise<void> {
         codeAnchor = field;
         void send({ type: "inlineFillCode", id: c.id });
       },
+    });
+  }
+  if (codes.length < all.length) {
+    rows.push({ label: "Other Accounts", icon: "key", onPick: () => showCodes(field, res, asked, true) });
+  }
+  if (!rows.length && asked) {
+    rows.push({
+      label: "No verification code for this site",
+      detail: "Add one in the Passwords app.",
+      icon: "code",
+      onPick: () => void send({ type: "inlineLaunch" }),
     });
   }
   dropdown.show(field, rows);
@@ -261,7 +319,7 @@ function consider(field: EventTarget | null, onFocus = false): void {
     if (kind === "otp") codeAnchor = field as HTMLInputElement;
     return;
   }
-  if (kind === "login" && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
+  if ((kind === "login" || kind === "otp") && settings.keyButton) keyButton.show(field as HTMLInputElement, () => pressKey(field as HTMLInputElement));
   else keyButton.hide();
   // a filled field (by us, or by the user) doesn't need the list in the way; a click, ArrowDown
   // or the key button still brings it up
@@ -290,8 +348,8 @@ document.addEventListener(
   "focusin",
   (e) => {
     if (!e.isTrusted) return;
-    // focus inside a shadow root retargets to the host; composedPath has the real input
-    const field = e.composedPath()[0] ?? e.target;
+    // focus inside a shadow root retargets to the host; composedPath has the real input, unless the root is closed
+    const field = deepFocused(e.composedPath()[0] ?? e.target);
     if (field === dropdown.field) return;
     consider(field, true);
   },
@@ -301,7 +359,7 @@ document.addEventListener(
 document.addEventListener(
   "mousedown",
   (e) => {
-    const field = e.composedPath()[0];
+    const field = deepFocused(e.composedPath()[0] ?? null);
     if (e.isTrusted && !dropdown.open && field instanceof HTMLInputElement && field === deepActive()) consider(field);
   },
   true,
@@ -310,21 +368,37 @@ document.addEventListener(
 function pressKey(field: HTMLInputElement): void {
   if (dropdown.open && dropdown.field === field) dropdown.close();
   else if (offer?.field === field) render();
+  else if (classifyFocus(field) === "otp") void offerCodes(field, true);
   else consider(field);
 }
+
+// an id typed in full counts as a pick; any other edit means the last pick no longer holds
+document.addEventListener(
+  "input",
+  (e) => {
+    const field = deepFocused(e.composedPath()[0] ?? null) as Element;
+    if (!e.isTrusted || !isUsernameField(field)) return;
+    const typed = field.value.trim().toLowerCase();
+    const saved = offer?.field === field && offer.res?.ok ? offer.res.logins?.find((l) => l.username.toLowerCase() === typed) : undefined;
+    const username = saved?.username ?? "";
+    if (username === toldPick) return;
+    toldPick = username;
+    void send({ type: "inlinePick", username });
+  },
+  true,
+);
 
 document.addEventListener(
   "focusout",
   (e) => {
-    if (e.isTrusted && e.composedPath()[0] === keyButton.field) keyButton.hide();
+    const left = e.composedPath()[0];
+    if (e.isTrusted && left instanceof Element && keyButton.field && holds(left, keyButton.field)) keyButton.hide();
   },
   true,
 );
 
 function deepActive(): Element | null {
-  let el = document.activeElement;
-  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
-  return el;
+  return deepFocused(document.activeElement) as Element | null;
 }
 
 void loadSettings().then(applySettings);
@@ -347,7 +421,7 @@ document.addEventListener(
   "input",
   (e) => {
     if (!e.isTrusted) return;
-    const field = e.composedPath()[0];
+    const field = deepFocused(e.composedPath()[0] ?? null);
     // emptying a filled field brings back the list it skipped on focus
     if (!offer && field instanceof HTMLInputElement && field.value === "" && field === deepActive()) return consider(field);
     if (!offer || field !== offer.field) return;
@@ -362,7 +436,7 @@ document.addEventListener(
   (e) => {
     // ArrowDown brings back a list closed with Escape, or one skipped because the field was filled
     if (!e.isTrusted || e.key !== "ArrowDown" || dropdown.open) return;
-    const field = e.composedPath()[0];
+    const field = deepFocused(e.composedPath()[0] ?? null);
     if (offer && field === offer.field) {
       render();
       if (dropdown.open) e.preventDefault();
@@ -379,14 +453,14 @@ function onFill(msg: Exclude<ToContent, { type: "signInCheck" }>): FillResult {
   if (location.hostname.toLowerCase() !== msg.expectedHost) return { filled: false, error: "page changed origin" };
   if (!frameIsSafe()) return { filled: false, error: "refusing to fill a cross-origin frame" };
   if (msg.type === "fill") {
-    const target = loginAnchor?.isConnected ? loginAnchor : (Array.from(document.querySelectorAll("input")).find(isLoginField) ?? null);
+    const target = loginAnchor?.isConnected ? loginAnchor : (allInputs().find(isLoginField) ?? null);
     const filled = fillCredentials(msg.username, msg.password, target);
     if (filled) lastFill = { password: msg.password, at: Date.now() };
     return { filled };
   }
   const target = codeAnchor?.isConnected
     ? codeAnchor
-    : (Array.from(document.querySelectorAll("input")).find((i) => isOtpField(i) && isVisible(i)) ?? null);
+    : (allInputs().find((i) => isOtpField(i) && isVisible(i)) ?? null);
   if (!target) return { filled: false, error: "no code field" };
   fillOneTimeCode(target, msg.code);
   return { filled: true };
@@ -402,7 +476,7 @@ chrome.runtime.onMessage.addListener((msg: ToContent, sender, sendResponse) => {
   if (msg.type === "signInCheck") {
     // a page that draws its form from script gets a moment to put it back up
     // a page still watching its own sign-in (a script-driven site changing its URL) settles it itself
-    setTimeout(() => sendResponse({ filled: false, loginShown: loginShown(document), watching: !!stopWatching }), SIGN_IN_SETTLE_MS);
+    setTimeout(() => sendResponse({ filled: false, loginShown: loginShown(), watching: !!stopWatching }), SIGN_IN_SETTLE_MS);
     return true;
   }
   sendResponse(onFill(msg));
@@ -418,12 +492,11 @@ const SIGN_IN_SETTLE_MS = 1_000;
 const SIGN_IN_GONE_MS = 1_500;
 let stopWatching: (() => void) | undefined;
 
-function loginShown(root: Document | ShadowRoot): boolean {
-  const shown = (r: ParentNode) => Array.from(r.querySelectorAll('input[type="password"]')).some(isVisible);
-  return shown(document) || (root !== document && shown(root));
+function loginShown(): boolean {
+  return allInputs().some((i) => i.type === "password" && isVisible(i));
 }
 
-function watchSignIn(root: Document | ShadowRoot): void {
+function watchSignIn(): void {
   stopWatching?.();
   const started = Date.now();
   let goneSince: number | undefined;
@@ -434,10 +507,11 @@ function watchSignIn(root: Document | ShadowRoot): void {
     void send({ type: "signInOutcome", ok });
   };
   const retyped = (e: Event) => {
-    if (e.isTrusted && e.composedPath()[0] instanceof Element && isPasswordField(e.composedPath()[0] as Element)) settle(false);
+    const typedIn = deepFocused(e.composedPath()[0] ?? null);
+    if (e.isTrusted && typedIn instanceof Element && isPasswordField(typedIn)) settle(false);
   };
   const timer = setInterval(() => {
-    if (loginShown(root)) goneSince = undefined;
+    if (loginShown()) goneSince = undefined;
     else goneSince ??= Date.now();
     if (goneSince !== undefined && Date.now() - goneSince >= SIGN_IN_GONE_MS) settle(true);
     else if (Date.now() - started > SIGN_IN_WAIT_MS) settle(false);
@@ -457,10 +531,19 @@ function watchSignIn(root: Document | ShadowRoot): void {
 const recent = (x: { at: number } | undefined, ms: number) => !!x && Date.now() - x.at < ms;
 
 // fire and forget: awaiting would let a navigating submit kill the save
-function maybeOfferSave(scope: ParentNode, from: Node): void {
+function maybeOfferSave(scope: ParentNode): void {
   if (!frameIsSafe()) return;
   const sub = collectSubmitted(scope);
-  if (!sub) return;
+  if (!sub) {
+    // a login's first page: the save offered on the next page needs this, even for a new account
+    const id = submittedId(scope);
+    if (id && id !== toldIdStep) {
+      toldIdStep = id;
+      toldPick = id;
+      void send({ type: "inlineIdStep", username: id });
+    }
+    return;
+  }
   const generated = recent(lastGenerated, 10 * 60_000) && sub.allPasswords.includes(lastGenerated!.password);
   const password = generated ? lastGenerated!.password : sub.password;
   // a login we just filled, submitted unchanged, is not a save
@@ -473,10 +556,7 @@ function maybeOfferSave(scope: ParentNode, from: Node): void {
   // at once, since losing it would lock the user out of the account
   const afterSignIn = !generated && !sub.isNew;
   void send({ type: "offerSave", username: sub.username, password, isNew: sub.isNew || generated, afterSignIn });
-  if (afterSignIn) {
-    const root = from.getRootNode();
-    watchSignIn(root instanceof ShadowRoot ? root : document);
-  }
+  if (afterSignIn) watchSignIn();
 }
 
 document.addEventListener(
@@ -484,16 +564,18 @@ document.addEventListener(
   (e) => {
     if (!e.isTrusted || !(e.target instanceof HTMLFormElement)) return;
     dropdown.close();
-    maybeOfferSave(e.target, e.target);
+    maybeOfferSave(e.target);
   },
   true,
 );
 document.addEventListener(
   "click",
   (e) => {
-    if (!e.isTrusted || !(e.target instanceof Element)) return;
-    const ctrl = e.target.closest('button, input[type=submit], input[type=button], [role="button"], a');
-    if (isSubmitControl(ctrl)) maybeOfferSave((ctrl as HTMLButtonElement).form ?? document, ctrl!);
+    // a button inside a shadow root retargets to its host; composedPath has the real one
+    const target = clickedElement(e);
+    if (!e.isTrusted || !(target instanceof Element)) return;
+    const ctrl = target.closest('button, input[type=submit], input[type=button], [role="button"], a');
+    if (isSubmitControl(ctrl)) maybeOfferSave(formAround(ctrl!) ?? document);
   },
   true,
 );
@@ -502,9 +584,9 @@ document.addEventListener(
   (e) => {
     // Enter on a picked row is the row's, not a submit
     if (!e.isTrusted || e.key !== "Enter" || dropdown.selecting) return;
-    const t = e.composedPath()[0];
+    const t = deepFocused(e.composedPath()[0] ?? null);
     // formless logins submit from script on Enter, with no submit event
-    if (t instanceof HTMLInputElement && (isPasswordField(t) || isUsernameField(t))) maybeOfferSave(t.form ?? document, t);
+    if (t instanceof HTMLInputElement && (isPasswordField(t) || isUsernameField(t))) maybeOfferSave(formAround(t) ?? document);
   },
   true,
 );

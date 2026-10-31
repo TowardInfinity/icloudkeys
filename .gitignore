@@ -3,6 +3,7 @@ dist/
 *.zip
 node_modules/
 target/
+.cache/
 
 # private working notes, never committed
 /PLAN.md

@@ -198,10 +198,214 @@ describe("forms", () => {
     ["text field named for email (LinkedIn)", `<form><input id="e" name="email-address" autocomplete="username"><input type="password" autocomplete="new-password"></form>`, "/signup", true],
     ["create-account button", `<form><input id="e" type="email"><input type="password"><button>Create account</button></form>`, "/start", true],
     ["sign-in page with a sign-up button (Dropbox)", `<form><input id="e" type="email" autocomplete="username webauthn"><button>Continue</button></form><button>Sign up</button>`, "/login", false],
+    ["sign-in page with a hidden password and a Create account button (Google)", `<form><input id="e" name="identifier" autocomplete="username webauthn" aria-label="Email or phone"><input type="password" style="display:none"><button type="button">Create account</button></form>`, "/v3/signin/identifier", false],
     ["not an email", `<form><input id="e" name="first_name"><input type="password" autocomplete="new-password"></form>`, "/signup", false],
   ])("Hide My Email offer: %s", async (_, body, path, expected) => {
     const got = await withBody(body, () => (globalThis as any).Classifier.isEmailField(document.getElementById("e")), path);
     expect(got).toBe(expected);
+  });
+
+  it.each([
+    ["Google authenticator", `<input id="e" type="tel" name="totpPin" autocomplete="off" aria-label="Enter code" pattern="[0-9 ]*">`, true],
+    ["Google text message", `<input id="e" type="tel" name="Pin" id="idvPin" aria-label="Enter the code">`, true],
+    ["Amazon", `<input id="e" name="otpCode" aria-label="Enter OTP">`, true],
+    ["GitHub", `<input id="e" name="app_otp" autocomplete="off">`, true],
+    ["LinkedIn", `<input id="e" name="verification_pin">`, true],
+    ["Microsoft", `<input id="e" type="tel" name="otc">`, true],
+    ["camelCase", `<input id="e" name="verificationCode">`, true],
+    ["card security code by autocomplete", `<input id="e" autocomplete="cc-csc" aria-label="Security code">`, false],
+    ["card security code by name", `<input id="e" name="cardSecurityCode" aria-label="Security code">`, false],
+    ["cvv", `<input id="e" name="cvv" aria-label="Security code">`, false],
+    ["promo code", `<input id="e" name="promo" aria-label="Enter promo code">`, false],
+    ["indian postal code", `<input id="e" name="pincode" aria-label="Enter pincode">`, false],
+    ["zip", `<input id="e" name="zipCode">`, false],
+    ["confirm a password", `<input id="e" type="password" name="passwordVerification">`, false],
+    ["an email to verify", `<input id="e" type="email" name="verificationEmail">`, false],
+    ["hot pot", `<input id="e" name="hotPot">`, false],
+  ])("one-time-code field: %s", async (_, body, expected) => {
+    const got = await withBody(body, () => (globalThis as any).Classifier.isOtpField(document.getElementById("e")));
+    expect(got).toBe(expected);
+  });
+
+  it.each([
+    // [case, body, expected]
+    ["login with a Create account button beside it", `<form><input name="u"><input id="e" type="password"><button type="submit">Log in</button><button type="button">Create account</button></form>`, false],
+    ["register page", `<form><input name="u"><input id="e" type="password"><button type="submit">Register</button></form>`, true],
+    ["sign-up named by its id", `<form><input type="email"><input id="e" type="password" name="reg-password"><button>Continue</button></form>`, true],
+    ["sign-up named by its placeholder", `<form><input type="email"><input id="e" type="password" placeholder="Choose a password"><button>Continue</button></form>`, true],
+    ["new-password set on a login by mistake", `<form><input name="u"><input id="e" type="password" autocomplete="new-password"><button type="submit">Sign in</button></form>`, false],
+    ["new-password on a Continue button", `<form><input type="email"><input id="e" type="password" autocomplete="new-password"><button>Continue</button></form>`, true],
+    ["two passwords, sign-up", `<form><input type="email"><input id="e" type="password"><input type="password"></form>`, true],
+    ["change form, the current one", `<form><input id="e" type="password"><input type="password"><input type="password"></form>`, false],
+    ["change form, the new one", `<form><input type="password"><input id="e" type="password"><input type="password"></form>`, true],
+    ["change form, current named", `<form><input id="e" type="password" name="old_password"><input type="password" name="password"></form>`, false],
+    ["two fields, current then new", `<form><input id="e" type="password"><input type="password" name="new_password"></form>`, false],
+    ["reset form", `<form><input id="e" type="password" name="password"><input type="password" name="password_confirmation"><button>Reset password</button></form>`, true],
+    ["forgot-password link marks a login", `<form><input name="u"><input id="e" type="password"><a href="/f">Forgot password?</a><button>Continue</button></form>`, false],
+    ["already-have-an-account marks a sign-up", `<form><input type="email"><input id="e" type="password"><p>Already have an account?</p><button>Continue</button></form>`, true],
+    ["login and sign-up in one page-wide form", `<form><nav></nav><div><input name="u"><input id="e" type="password"><button type="submit">Log in</button></div><div><input type="email"><input type="password"><input type="password"><button type="submit">Sign up</button></div></form>`, false],
+    ["a sign-in with terms small print", `<form><input name="u"><input id="e" type="password"><p>By continuing you agree to our Terms of Service</p><button>Continue</button></form>`, false],
+    ["hidden already-have-an-account text", `<form><input name="u"><input id="e" type="password"><p style="display:none">Already have an account?</p><button>Continue</button></form>`, false],
+    ["german login", `<form><input name="u"><input id="e" type="password"><button type="submit">Anmelden</button><a>Registrieren</a></form>`, false],
+    ["german sign-up", `<form><input name="u"><input id="e" type="password"><button type="submit">Registrieren</button></form>`, true],
+    ["hindi sign-up", `<form><input name="u"><input id="e" type="password"><button type="submit">साइन अप</button></form>`, true],
+  ])("new password: %s", async (_, body, expected) => {
+    expect(await withBody(body, () => (globalThis as any).Classifier.isNewPasswordField(document.getElementById("e")))).toBe(expected);
+  });
+
+  it.each([
+    ["underscored name", `<form><input id="e" name="j_username"><input type="password"></form>`, "login"],
+    ["camelCase name", `<form><input id="e" name="txtUserName"><input type="password"></form>`, "login"],
+    ["any box right above a login password", `<form><input id="e" name="uwinid"><input type="password"><button>Log in</button></form>`, "login"],
+    ["non-English name right above a password", `<form><input id="e" name="codeUtilisateur"><input type="password"></form>`, "login"],
+    ["two-step, german label", `<form action="/x"><label for="e">Benutzername</label><input id="e"><button>Anmelden</button></form>`, "login"],
+    ["first name above a sign-up password", `<form><input id="e" name="first_name"><input type="password" autocomplete="new-password"></form>`, null],
+    ["name inside a bracketed key", `<form><input id="e" name="email-signup-user[first_name]"><input type="password"></form>`, null],
+    ["captcha above a password", `<form><input id="e" name="captcha"><input type="password"></form>`, null],
+    ["box two above a password", `<form><input id="e" name="something"><input name="other"><input type="password"></form>`, null],
+    ["newsletter in a page-wide form with a login", `<form><footer><input id="e" type="email" name="news"><button type="submit">Subscribe</button></footer><div><input name="user"><input type="password"><button type="submit">Log in</button></div></form>`, null],
+    ["card code typed as a password", `<form><input id="e" type="password" name="cvv"></form>`, null],
+    ["card autocomplete", `<form><input id="e" type="password" autocomplete="cc-csc"></form>`, null],
+    ["card security number", `<form><input id="e" type="password" name="CardSecurityNumber"></form>`, null],
+    ["security answer", `<form><input name="user"><input id="e" type="password" name="securityAnswer"></form>`, null],
+    ["social security box", `<form><input id="e" type="password" name="SSN_1"></form>`, null],
+    ["a real password on a tax site", `<form><input name="u"><input id="e" type="password" placeholder="Your tax account password"></form>`, "login"],
+    ["a card portal's password", `<form><input name="u"><input id="e" type="password" name="cardPassword"></form>`, "login"],
+    ["authenticator or backup code", `<form><input id="e" name="code" aria-label="Authenticator code or backup code"></form>`, "otp"],
+    ["recovery code", `<form><input id="e" name="recoveryCode" aria-label="Enter a recovery code"></form>`, null],
+    ["backup code", `<form><input id="e" name="backupCodePin" aria-label="Enter one of your 8-digit backup codes"></form>`, null],
+  ])("focus offer: %s", async (_, body, expected) => {
+    expect(await withBody(body, () => (globalThis as any).Classifier.classifyFocus(document.getElementById("e")), "/x")).toBe(expected);
+  });
+
+  it("isn't swayed by a sign-up link in the query string", async () => {
+    const got = await withBody(`<form><input name="u"><input id="e" type="password"><button>Continue</button></form>`, () => (globalThis as any).Classifier.isNewPasswordField(document.getElementById("e")), "/auth?next=/register");
+    expect(got).toBe(false);
+  });
+
+  it("keeps a login card's password in scope despite its header and a Next button", async () => {
+    const got = await withBody(`<form><header>Log in</header><div><input id="u" name="username"><button type="button">Next</button></div><div><input id="p" type="password"></div><footer><a>Help</a></footer></form>`, () => {
+      (globalThis as any).Classifier.fillCredentials("alice", "pw", document.getElementById("u"));
+      return (document.getElementById("p") as HTMLInputElement).value;
+    });
+    expect(got).toBe("pw");
+  });
+
+  it("won't guess between two filled IDs in a formless page", async () => {
+    const got = await withBody(`<input id="a" autocomplete="username" value="a@example.com"><input id="b" type="email" value="b@example.com">`, () => (globalThis as any).Classifier.submittedId(document), "/login");
+    expect(got).toBe("");
+  });
+
+  it("fills the box above the password whatever it's called", async () => {
+    const got = await withBody(`<form><input id="u" name="uwinid"><input id="p" type="password"></form>`, () => {
+      const p = document.getElementById("p") as HTMLInputElement;
+      (globalThis as any).Classifier.fillCredentials("alice", "pw", p);
+      return [(document.getElementById("u") as HTMLInputElement).value, p.value];
+    });
+    expect(got).toEqual(["alice", "pw"]);
+  });
+
+  it.each([
+    ["read-only", `<input id="u" name="username" readonly value="x">`],
+    ["disabled", `<input id="u" name="username" disabled value="x">`],
+    ["covered by another element", `<input id="u" name="username" value="x"><div style="position:fixed;inset:0;background:#fff"></div>`],
+  ])("won't write into a field that's %s, unless the user is in it", async (_, field) => {
+    const got = await withBody(`<form>${field}<input id="p" type="password"></form>`, () => {
+      const c = (globalThis as any).Classifier;
+      const u = document.getElementById("u") as HTMLInputElement;
+      const p = document.getElementById("p") as HTMLInputElement;
+      c.fillCredentials("alice", "pw", p);
+      const skipped = u.value;
+      c.fillCredentials("alice", "pw", u);
+      return [skipped, u.value];
+    });
+    expect(got).toEqual(["x", "alice"]);
+  });
+
+  it.each([
+    ["a floating label", `<div style="position:relative"><input id="u" name="username"><label for="u" style="position:absolute;left:4px;top:2px">User</label></div>`],
+    ["an icon on top", `<div style="position:relative"><input id="u" name="username" style="width:200px"><span style="position:absolute;right:0;top:0;width:16px;height:16px"></span></div>`],
+    ["a mask that lets clicks through", `<div style="position:relative"><input id="u" name="username"><div style="position:absolute;inset:0;pointer-events:none"></div></div>`],
+    ["being scrolled out of view", `<div style="height:3000px"></div><input id="u" name="username">`],
+  ])("still fills a field with %s", async (_, field) => {
+    const got = await withBody(`<form>${field}<input id="p" type="password"></form>`, () => {
+      (globalThis as any).Classifier.fillCredentials("alice", "pw", document.getElementById("p"));
+      return (document.getElementById("u") as HTMLInputElement).value;
+    });
+    expect(got).toBe("alice");
+  });
+
+  it("won't put a password into a card code box", async () => {
+    const got = await withBody(`<form><input name="user"><input id="c" type="password" name="cvv"></form>`, () => {
+      (globalThis as any).Classifier.fillCredentials("alice", "pw", document.querySelector("input[name=user]"));
+      return (document.getElementById("c") as HTMLInputElement).value;
+    });
+    expect(got).toBe("");
+  });
+
+  it.each([
+    ["Google tag", `<div data-profile-identifier>alice@example.com</div><form><input id="e" type="password"></form>`, "alice@example.com"],
+    ["short text in the form", `<form><div>Welcome</div><span> alice@example.com </span><input id="e" type="password"></form>`, "alice@example.com"],
+    ["an email inside a sentence", `<form><p>Write to help@example.com for support</p><input id="e" type="password"></form>`, undefined],
+    ["two different emails", `<form><span>a@example.com</span><span>b@example.com</span><input id="e" type="password"></form>`, undefined],
+    ["hidden text", `<form><span style="display:none">a@example.com</span><input id="e" type="password"></form>`, undefined],
+    ["nothing shown", `<form><input id="e" type="password"></form>`, undefined],
+  ])("account shown on the page: %s", async (_, body, expected) => {
+    expect(await withBody(body, () => (globalThis as any).Classifier.shownAccount(document.getElementById("e")) ?? undefined)).toBe(expected);
+  });
+
+  it.each([
+    ["a sign-in's ID step", `<form><input id="e" name="identifier" autocomplete="username"><button>Next</button></form>`, "/login", "alice@example.com"],
+    ["a sign-up's email step", `<form><input id="e" type="email"><button>Continue</button></form>`, "/signup", "alice@example.com"],
+    ["a newsletter", `<form><input id="e" type="email" name="news"><button>Subscribe</button></form>`, "/blog", ""],
+    ["a form with a password", `<form><input id="e" autocomplete="username"><input type="password"></form>`, "/login", ""],
+    ["a sign-up worded newsletter", `<form><input id="e" type="email"><button>Sign up for our newsletter</button></form>`, "/blog", ""],
+  ])("ID submitted on its own: %s", async (_, body, path, expected) => {
+    const got = await withBody(body, () => {
+      const c = (globalThis as any).Classifier;
+      const e = document.getElementById("e") as HTMLInputElement;
+      e.value = "alice@example.com";
+      return c.submittedId(e.form);
+    }, path);
+    expect(got).toBe(expected);
+  });
+
+  it.each([
+    ["no maxlength, by position", `<div style="display:flex;gap:4px">${'<input style="width:30px" inputmode="numeric">'.repeat(6)}</div>`, "123456"],
+    ["each in its own shadow root", `<div id="row" style="display:flex"></div>`, "123456"],
+  ])("spreads a code across boxes: %s", async (name, body, expected) => {
+    const got = await withBody(body, () => {
+      const row = document.getElementById("row");
+      if (row) for (let i = 0; i < 6; i++) row.appendChild(document.createElement("x-box")).attachShadow({ mode: "open" }).innerHTML = '<input maxlength="1" style="width:30px">';
+      const boxes = (globalThis as any).Classifier.allInputs() as HTMLInputElement[];
+      (globalThis as any).Classifier.fillOneTimeCode(boxes[0], "123456");
+      return boxes.map((b) => b.value).join("");
+    });
+    expect(got).toBe(expected);
+  });
+
+  it("keeps a code in one box when wide boxes share a row", async () => {
+    const got = await withBody(`<div style="display:flex">${'<input style="width:200px">'.repeat(4)}</div>`, () => {
+      const boxes = Array.from(document.querySelectorAll("input"));
+      (globalThis as any).Classifier.fillOneTimeCode(boxes[0], "123456");
+      return boxes[0]!.value;
+    });
+    expect(got).toBe("123456");
+  });
+
+  it("sees into closed shadow roots once given a reader", async () => {
+    const got = await withBody(`<x-login id="h"></x-login>`, () => {
+      const c = (globalThis as any).Classifier;
+      const host = document.getElementById("h")!;
+      const root = host.attachShadow({ mode: "closed" });
+      root.innerHTML = '<input name="username"><input type="password">';
+      const before = c.allInputs().length;
+      c.readShadowRootsWith((el: Element) => (el === host ? root : null));
+      const after = c.allInputs().length;
+      root.querySelector("input")!.focus();
+      return [before, after, c.deepFocused(host)?.getAttribute("name")];
+    });
+    expect(got).toEqual([0, 2, "username"]);
   });
 
   it("spreads a code across single-character boxes", async () => {

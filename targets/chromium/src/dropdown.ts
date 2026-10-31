@@ -2,6 +2,7 @@
 // can neither read nor restyle it, sits in the top layer so page dialogs can't cover it, and rows
 // act only on trusted input.
 
+import { deepFocused } from "@icloudkeys/classifier";
 import { svg, type Icon } from "./icons.ts";
 
 export { svg, type Icon };
@@ -286,7 +287,7 @@ export class Dropdown {
       e.stopPropagation();
       return;
     }
-    if (e.composedPath()[0] !== this.anchor) return;
+    if (deepFocused(e.composedPath()[0] ?? null) !== this.anchor) return;
     const n = this.rows.length;
     if (e.key === "ArrowDown") this.select((this.active + 1) % n);
     // from nothing selected, up goes to the last row
@@ -311,7 +312,7 @@ export class Dropdown {
       e.stopImmediatePropagation();
       return;
     }
-    if (!path.includes(this.anchor as EventTarget)) this.close();
+    if (!path.includes(this.anchor as EventTarget) && deepFocused(path[0] ?? null) !== this.anchor) this.close();
   }
 }
 
