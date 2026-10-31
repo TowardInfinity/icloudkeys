@@ -46,11 +46,19 @@ async function fillFromWorker(expectedHost: string) {
   const res = await sw.evaluate(
     async ({ target, expectedHost }) => {
       const [tab] = await chrome.tabs.query({ url: target });
-      return chrome.tabs.sendMessage(
-        tab!.id!,
-        { type: "fill", expectedHost, username: "alice", password: "s3cret" },
-        { frameId: 0 },
-      );
+      // a slow machine can reach here before the content script is listening
+      for (let waited = 0; ; waited += 100) {
+        try {
+          return await chrome.tabs.sendMessage(
+            tab!.id!,
+            { type: "fill", expectedHost, username: "alice", password: "s3cret" },
+            { frameId: 0 },
+          );
+        } catch (e) {
+          if (waited >= 15_000 || !String(e).includes("Receiving end does not exist")) throw e;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
     },
     { target: url, expectedHost },
   );
@@ -70,13 +78,13 @@ it("refuses a credential pinned to another host", async () => {
   const { res, values } = await fillFromWorker("evil.test");
   expect(res).toEqual({ filled: false, error: "page changed origin" });
   expect(values).toEqual(["", ""]);
-});
+}, 30_000);
 
 it("fills a credential pinned to this host", async () => {
   const { res, values } = await fillFromWorker("127.0.0.1");
   expect(res).toEqual({ filled: true });
   expect(values).toEqual(["alice", "s3cret"]);
-});
+}, 30_000);
 
 it("installs the Hide My Email header rules scoped to itself", async () => {
   const rules = await sw.evaluate(async () => {
