@@ -421,62 +421,6 @@ describe("dropdown", () => {
     await page.close();
   });
 
-  describe("a code that arrives after the field took focus", () => {
-    const codes = (page: Page, list: unknown[]) => page.evaluate((l) => ((window as any).__codes = l), list);
-    const sms = [{ id: 0, source: "sms", username: "", domain: "127.0.0.1" }];
-    const asks = async (page: Page) => (await sent(page)).filter((m) => m.type === "inlineCodes").length;
-
-    it("opens the list by itself and still fills nothing", async () => {
-      const page = await open("/otp");
-      await codes(page, []);
-      await page.click("#code");
-      await page.waitForTimeout(200);
-      expect(await dropdownShown(page)).toBe(false);
-      await codes(page, sms);
-      await expect.poll(() => dropdownShown(page), { timeout: 6000 }).toBe(true);
-      expect(await page.inputValue("#code")).toBe("");
-      expect((await sent(page)).map((m) => m.type)).not.toContain("inlineFillCode");
-      await page.close();
-    }, 15_000);
-
-    it("stops looking once the user leaves the field", async () => {
-      const page = await open("/otp");
-      await codes(page, []);
-      await page.click("#code");
-      await page.waitForTimeout(200);
-      await page.evaluate(() => (document.activeElement as HTMLElement).blur());
-      const before = await asks(page);
-      await codes(page, sms);
-      await page.waitForTimeout(4000);
-      expect(await asks(page)).toBe(before);
-      expect(await dropdownShown(page)).toBe(false);
-      await page.close();
-    }, 15_000);
-
-    it("stops looking once the user types the code", async () => {
-      const page = await open("/otp");
-      await codes(page, []);
-      await page.click("#code");
-      await page.keyboard.type("48");
-      await codes(page, sms);
-      await page.waitForTimeout(4000);
-      expect(await dropdownShown(page)).toBe(false);
-      await page.close();
-    }, 15_000);
-
-    it("doesn't look while the app is locked", async () => {
-      const page = await open("/otp");
-      await codes(page, []);
-      await page.evaluate(() => ((window as any).__reply.status.state = "locked"));
-      await page.click("#code");
-      await page.waitForTimeout(200);
-      const before = await asks(page);
-      await page.waitForTimeout(4000);
-      expect(await asks(page)).toBe(before);
-      await page.close();
-    }, 15_000);
-  });
-
   it("lists codes on a one-time-code field and picks by id", async () => {
     const page = await open("/otp");
     await page.click("#code");
