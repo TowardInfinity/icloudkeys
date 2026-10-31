@@ -6,7 +6,7 @@ Apple Passwords (iCloud Keychain) and Hide My Email for Chromium browsers on mac
 
 - **Apple Passwords AutoFill:** Native SRP-6a + AES-GCM integration with macOS PasswordManager helper.
 - **One-Time Verification Codes:** In-page and popup autofill for both TOTP and Messages-sourced codes.
-- **Hide My Email:** Generate, reserve, and fill iCloud+ burner addresses directly in sign-up forms.
+- **Hide My Email:** Generate, reserve, and fill iCloud+ burner addresses directly in sign-up forms. An address you already made for the site is offered on its email fields, so you don't make a second one.
 - **Smart Password Generation:** Honors site-specific `passwordrules` attributes and supports complex passwords.
 - **Native Safari Experience:** Floating dropdown in top layer, in-field key button, immediate username prefill, and delayed save prompts (only on successful sign-in).
 - **Login Flows:** ID and password on one page or two, sign-up, password change and reset forms, split code boxes, open and closed shadow roots, and sign-in words in major languages.

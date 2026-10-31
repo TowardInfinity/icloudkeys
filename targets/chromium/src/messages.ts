@@ -26,6 +26,7 @@ export type ContentRequest =
   | { type: "inlinePick"; username: string }
   | { type: "inlineIdStep"; username: string }
   | { type: "inlineCodes" }
+  | { type: "hmeAddresses" }
   | { type: "inlineFillCode"; id: number }
   /** `afterSignIn`: held until the sign-in is seen to work, so a mistyped password is never offered. */
   | { type: "offerSave"; username: string; password: string; isNew: boolean; afterSignIn?: boolean }
@@ -65,6 +66,8 @@ export type Response =
       status: Status;
       host?: string;
       logins?: Login[];
+      /** Hide My Email addresses already made for the asking frame's site. */
+      addresses?: string[];
       /** The account picked earlier in this sign-in, for narrowing `logins` or `codes`. */
       picked?: string;
       codes?: CodeRow[];

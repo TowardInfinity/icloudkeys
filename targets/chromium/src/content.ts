@@ -5,6 +5,7 @@ import {
   collectSubmitted,
   deepFocused,
   emailPurpose,
+  isEmailish,
   fillCredentials,
   fillNewPassword,
   fillOneTimeCode,
@@ -70,6 +71,8 @@ interface Offer {
   res: Response | undefined;
   generated: Row[];
   showAll?: boolean;
+  /** Hide My Email addresses already made for this site. */
+  addresses?: string[];
 }
 let offer: Offer | undefined;
 
@@ -80,6 +83,16 @@ async function offerLogins(field: HTMLInputElement, isLogin: boolean): Promise<v
   if (seq !== offerSeq) return;
   offer = { field, isLogin, res, generated: generatedRows(field, res) };
   render();
+  // iCloud can take a moment and the list shouldn't wait on it, so this is asked apart
+  if (isEmailish(field)) void addExistingAddresses(offer, seq);
+}
+
+async function addExistingAddresses(current: Offer, seq: number): Promise<void> {
+  const res = await send({ type: "hmeAddresses" });
+  if (seq !== offerSeq || !res?.ok || !res.addresses?.length) return;
+  current.addresses = res.addresses;
+  // a list the user closed while this was on its way stays closed
+  if (dropdown.open && dropdown.field === current.field) render();
 }
 
 function render(): void {
@@ -164,7 +177,11 @@ function rowsFor(current: Offer): Row[] {
   const typed = isPasswordField(field) ? "" : value.trim().toLowerCase();
   const purpose = typed ? null : emailPurpose(field);
   // otherwise the feature is invisible and nothing says why
-  const hide = !purpose ? [] : res?.status.canHideEmail ? [aliasRow(field)] : res?.status.hmeNeedsSignIn ? [signInRow] : [];
+  const create = !purpose ? [] : res?.status.canHideEmail ? [aliasRow(field)] : res?.status.hmeNeedsSignIn ? [signInRow] : [];
+  // a saved login with this address already fills the password too
+  const saved = isLogin && res?.ok ? (res.logins ?? []).map((l) => l.username.toLowerCase()) : [];
+  const existing = (current.addresses ?? []).filter((a) => a.toLowerCase().startsWith(typed) && !saved.includes(a.toLowerCase()));
+  const hide = [...existing.map((address) => existingAddressRow(field, address)), ...create];
   const rows: Row[] = [...generated];
   // an email field that isn't a login's (checkout, newsletter) never gets login rows
   if (!isLogin) return [...rows, ...hide];
@@ -178,7 +195,7 @@ function rowsFor(current: Offer): Row[] {
   const narrowed = typedLogins.filter((l) => l.username.toLowerCase() === settled);
   const logins = narrowed.length ? narrowed : typedLogins;
   // typing past every saved login closes the list, as in Safari
-  if (typed && !logins.length && !rows.length) return [];
+  if (typed && !logins.length && !rows.length && !hide.length) return [];
   const loginRows = logins.map((login): Row => ({
     label: login.username || "no user name",
     detail: siteOf(login),
@@ -268,6 +285,15 @@ const signInRow: Row = {
   detail: "Sign in to iCloud.com in this browser to use it",
   onPick: () => void window.open("https://www.icloud.com/", "_blank", "noopener"),
 };
+
+function existingAddressRow(field: HTMLInputElement, address: string): Row {
+  return {
+    label: address,
+    detail: "Your Hide My Email address for this site",
+    icon: "mail",
+    onPick: () => setFieldValue(field, address),
+  };
+}
 
 function aliasRow(field: HTMLInputElement): Row {
   return {

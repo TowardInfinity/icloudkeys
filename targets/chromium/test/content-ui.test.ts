@@ -58,6 +58,8 @@ const PAGES: Record<string, string> = {
       <input id="user" name="identifier" autocomplete="username webauthn" aria-label="Email or phone">
       <input type="password" name="hiddenPassword" tabindex="-1" aria-hidden="true" style="display:none">
       <button type="button">Create account</button><button type="button">Next</button></form>`,
+  "/email-login": `<form onsubmit="event.preventDefault()"><input id="email" type="email" name="email" autocomplete="username">
+      <input id="pw" type="password" name="password" autocomplete="current-password"><button>Sign in</button></form>`,
   "/plain-email": `<form onsubmit="event.preventDefault()"><input id="email" type="email" autocomplete="username"><button>Next</button></form>`,
   "/split-code": `<title>Enter verification code</title><form onsubmit="event.preventDefault()"><div style="display:flex;gap:8px"><input id="b0" name="code_0" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 1 of 6" style="width:60px;box-sizing:border-box"><input id="b1" name="code_1" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 2 of 6" style="width:60px;box-sizing:border-box"><input id="b2" name="code_2" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 3 of 6" style="width:60px;box-sizing:border-box"><input id="b3" name="code_3" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 4 of 6" style="width:60px;box-sizing:border-box"><input id="b4" name="code_4" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 5 of 6" style="width:60px;box-sizing:border-box"><input id="b5" name="code_5" type="text" autocomplete="one-time-code" aria-label="Enter verification code character 6 of 6" style="width:60px;box-sizing:border-box"></div></form>`,
   "/code-field": `<title>Sign in</title><input id="c" type="tel" name="totpPin" autocomplete="off" aria-label="Enter code" pattern="[0-9 ]*">`,
@@ -122,6 +124,8 @@ const STUB = `(() => {
       if (msg.type === "inlinePick") window.__picked = msg.username || undefined;
       if (msg.type === "inlineLogins" && window.__picked) return { ...base, picked: window.__picked };
       if (msg.type === "inlineCodes") return { ...base, picked: window.__picked, codes: window.__codes ?? (window.__noCodes ? [] : [{ id: 0, source: "sms", username: "", domain: location.hostname }]) };
+      if (msg.type === "hmeAddresses" && window.__addressDelay) await new Promise((r) => setTimeout(r, window.__addressDelay));
+      if (msg.type === "hmeAddresses") return { ...base, addresses: window.__addresses ?? [] };
       if (msg.type === "hmeGenerate" && window.__hmeDelay) await new Promise((r) => setTimeout(r, window.__hmeDelay));
       if (msg.type === "hmeGenerate" && window.__hmeFail) return { ...base, ok: false, error: "wait a moment" };
       // like the router, reserve hands out the address last shown, never a refused one
@@ -235,6 +239,121 @@ describe("dropdown", () => {
     const saves = (await sent(page)).filter((m) => m.type === "offerSave");
     expect(saves).toEqual([{ type: "offerSave", username: "me@example.com", password: a, isNew: true, afterSignIn: false }]);
     await page.close();
+  });
+
+  describe("a Hide My Email address already made for this site", () => {
+    const rowText = (page: any) => page.evaluate(() => [...(document.querySelector("icloudkeys-suggestions") as any).__root.querySelectorAll(".row")].map((r: any) => r.textContent));
+    const has = (page: any, addresses: string[], delay = 0) =>
+      page.evaluate(([a, d]: [string[], number]) => {
+        Object.assign(window as any, { __addresses: a, __addressDelay: d });
+        // stays closed to the page; this only lets the test read the rows
+        const attach = Element.prototype.attachShadow;
+        Element.prototype.attachShadow = function (o) {
+          return ((this as any).__root = attach.call(this, o));
+        };
+      }, [addresses, delay]);
+
+    it("comes first on a sign-up field, fills on a pick, and creates nothing", async () => {
+      const page = await open("/signup");
+      await has(page, ["made@icloud.com"]);
+      await page.click("#email");
+      await expect.poll(async () => (await rowText(page))[0]).toContain("made@icloud.com");
+      expect((await rowText(page)).join()).toContain("Create a new iCloud address");
+      expect(await page.inputValue("#email")).toBe("");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await expect.poll(() => page.inputValue("#email")).toBe("made@icloud.com");
+      const types = (await sent(page)).map((m) => m.type);
+      expect(types).not.toContain("hmeGenerate");
+      expect(types).not.toContain("hmeReserve");
+      await page.close();
+    });
+
+    it("needs a real pick, so the page never gets the address by focus alone", async () => {
+      const page = await open("/signup");
+      await has(page, ["made@icloud.com"]);
+      await page.click("#email");
+      await expect.poll(async () => (await rowText(page))[0]).toContain("made@icloud.com");
+      const seen = await page.evaluate(() => document.documentElement.outerHTML + (document.querySelector("#email") as HTMLInputElement).value);
+      expect(seen).not.toContain("made@icloud.com");
+      await page.close();
+    });
+
+    it("is offered on a sign-in page's email field, below the saved logins", async () => {
+      const page = await open("/email-login");
+      await has(page, ["made@icloud.com"]);
+      await page.click("#email");
+      await expect.poll(async () => (await rowText(page)).join()).toContain("made@icloud.com");
+      const rows = await rowText(page);
+      expect(rows[0]).toContain("alice");
+      expect(rows.findIndex((r: string) => r.includes("made@icloud.com"))).toBeGreaterThan(rows.findIndex((r: string) => r.includes("bob@example.com")));
+      await page.close();
+    });
+
+    it("isn't listed twice when a saved login already uses it", async () => {
+      const page = await open("/email-login");
+      await has(page, ["Bob@example.com"]);
+      await page.click("#email");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      await page.waitForTimeout(100);
+      expect((await rowText(page)).filter((r: string) => r.toLowerCase().includes("bob@example.com"))).toHaveLength(1);
+      await page.close();
+    });
+
+    it("is never asked for on a field that doesn't take an email", async () => {
+      const page = await open("/login");
+      await has(page, ["made@icloud.com"]);
+      await page.click("#user");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      await page.click("#pw");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      expect((await sent(page)).map((m) => m.type)).not.toContain("hmeAddresses");
+      await page.close();
+    });
+
+    it("doesn't hold up the list while iCloud answers, and joins it after", async () => {
+      const page = await open("/signup");
+      await has(page, ["made@icloud.com"], 500);
+      await page.click("#email");
+      await expect.poll(() => dropdownShown(page), { timeout: 400 }).toBe(true);
+      expect((await rowText(page)).join()).not.toContain("made@icloud.com");
+      await expect.poll(async () => (await rowText(page))[0]).toContain("made@icloud.com");
+      await page.close();
+    });
+
+    it("doesn't reopen a list closed with Escape when the answer comes late", async () => {
+      const page = await open("/signup");
+      await has(page, ["made@icloud.com"], 300);
+      await page.click("#email");
+      await expect.poll(() => dropdownShown(page)).toBe(true);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(500);
+      expect(await dropdownShown(page)).toBe(false);
+      await page.close();
+    });
+
+    it("drops a late answer once focus has moved to another field", async () => {
+      const page = await open("/signup");
+      await has(page, ["made@icloud.com"], 300);
+      await page.click("#email");
+      await page.click("#pw");
+      await page.waitForTimeout(500);
+      const shown = await dropdownShown(page);
+      if (shown) expect((await rowText(page)).join()).not.toContain("made@icloud.com");
+      await page.close();
+    });
+
+    it("narrows with what's typed, staying past the saved logins until nothing matches", async () => {
+      const page = await open("/email-login");
+      await has(page, ["made@icloud.com"]);
+      await page.click("#email");
+      await expect.poll(async () => (await rowText(page)).join()).toContain("made@icloud.com");
+      await page.keyboard.type("ma");
+      await expect.poll(async () => (await rowText(page))[0]).toContain("made@icloud.com");
+      await page.keyboard.type("x");
+      await expect.poll(() => dropdownShown(page)).toBe(false);
+      await page.close();
+    });
   });
 
   it("offers a Hide My Email address on a sign-up email field", async () => {

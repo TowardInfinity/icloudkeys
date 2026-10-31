@@ -11,7 +11,7 @@ const EXT = "pejdijmoenmkgeppbflobdenhhabjlaj";
 const POPUP = `chrome-extension://${EXT}/popup.html`;
 
 async function setup(
-  opts: { unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void; loginShown?: boolean; watching?: boolean } = {},
+  opts: { aliases?: unknown[]; unlocked?: boolean; codes?: boolean; setIcon?: (unlocked: boolean) => void; loginShown?: boolean; watching?: boolean } = {},
 ) {
   const helper = new FakeHelper({
     "example.com": [{ username: "alice", password: "hunter2" }],
@@ -33,7 +33,9 @@ async function setup(
     await client.verifyPin(helper.pin);
   }
   const sent: { tabId: number; frameId: number; msg: ToContent }[] = [];
-  const hme = { session: vi.fn(async () => ({ available: true })), generate: vi.fn(async () => "abc@icloud.com"), reserve: vi.fn(async () => ({}) as any) };
+  const hme = { session: vi.fn(async () => ({ available: true })), generate: vi.fn(async () => "abc@icloud.com"), reserve: vi.fn(async () => ({}) as any),
+    list: vi.fn(async () => ({ hmeEmails: opts.aliases ?? [ALIAS_HERE, ALIAS_ELSEWHERE], forwardToEmails: [], selectedForwardTo: "" }) as any),
+  };
   const handle = createRouter({
     client,
     hme,
@@ -58,7 +60,92 @@ const page = (url = "https://example.com/login", frameId = 0, tabUrl = url): Sen
   frameId,
   tab: { id: 1, url: tabUrl },
 });
+const ALIAS_HERE = { hme: "here@icloud.com", label: "example.com", domain: "", isActive: true, createTimestamp: 1 };
+const ALIAS_ELSEWHERE = { hme: "elsewhere@icloud.com", label: "other-site.com", domain: "", isActive: true, createTimestamp: 2 };
 const popup: Sender = { id: EXT, url: POPUP };
+
+describe("Hide My Email addresses already made", () => {
+  const list = (hme: any) => hme.list as ReturnType<typeof vi.fn>;
+
+  it("answers with this site's addresses only, and nothing about the others", async () => {
+    const { handle } = await setup();
+    const res: any = await handle({ type: "hmeAddresses" }, page("https://www.example.com/join"));
+    expect(res).toMatchObject({ ok: true, addresses: ["here@icloud.com"] });
+    expect(JSON.stringify(res)).not.toContain("elsewhere");
+    expect(JSON.stringify(res)).not.toContain("other-site");
+  });
+
+  it("decides the site from the asking frame, never from the message", async () => {
+    const { handle } = await setup();
+    const res = await handle({ type: "hmeAddresses", host: "example.com" } as any, page("https://evil.example/"));
+    expect(res).toMatchObject({ ok: true, addresses: [] });
+    expect(await handle({ type: "hmeAddresses" }, page("https://example.com/", 3))).toMatchObject({ addresses: ["here@icloud.com"] });
+  });
+
+  it("refuses an insecure page", async () => {
+    const { handle, hme } = await setup();
+    expect(await handle({ type: "hmeAddresses" }, page("http://example.com/"))).toMatchObject({ ok: false });
+    expect(list(hme)).not.toHaveBeenCalled();
+  });
+
+  it("isn't for the popup", async () => {
+    const { handle, hme } = await setup();
+    expect(await handle({ type: "hmeAddresses" }, popup)).toBeUndefined();
+    expect(list(hme)).not.toHaveBeenCalled();
+  });
+
+  it("asks iCloud once while the list is fresh, and again after it ages", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeAddresses" }, page());
+    await handle({ type: "hmeAddresses" }, page());
+    expect(list(hme)).toHaveBeenCalledTimes(1);
+    advance(6 * 60_000);
+    await handle({ type: "hmeAddresses" }, page());
+    expect(list(hme)).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one request between frames asking at once", async () => {
+    const { handle, hme } = await setup();
+    const answers = await Promise.all([handle({ type: "hmeAddresses" }, page()), handle({ type: "hmeAddresses" }, page("https://example.com/", 3))]);
+    expect(answers).toMatchObject([{ addresses: ["here@icloud.com"] }, { addresses: ["here@icloud.com"] }]);
+    expect(list(hme)).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't ask when there's no iCloud session, and forgets what it held", async () => {
+    const { handle, hme, advance } = await setup();
+    await handle({ type: "hmeAddresses" }, page());
+    hme.session.mockResolvedValue({ available: false, reason: "not-signed-in" } as any);
+    advance(6 * 60_000);
+    expect(await handle({ type: "hmeAddresses" }, page())).toMatchObject({ ok: true, addresses: [] });
+    expect(list(hme)).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers with nothing when the list fails, retries later, and leaves logins working", async () => {
+    const { handle, hme, advance } = await setup();
+    list(hme).mockRejectedValueOnce(new Error("offline"));
+    expect(await handle({ type: "hmeAddresses" }, page())).toMatchObject({ ok: true, addresses: [] });
+    expect(await handle({ type: "inlineLogins" }, page())).toMatchObject({ ok: true });
+    await handle({ type: "hmeAddresses" }, page());
+    expect(list(hme)).toHaveBeenCalledTimes(1);
+    advance(31_000);
+    expect(await handle({ type: "hmeAddresses" }, page())).toMatchObject({ addresses: ["here@icloud.com"] });
+  });
+
+  it("reads the list again after an address is made, ignoring an answer already on its way", async () => {
+    const { handle, hme, advance } = await setup();
+    let release!: (v: any) => void;
+    list(hme).mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const stale = handle({ type: "hmeAddresses" }, page());
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    await handle({ type: "hmeGenerate" }, page());
+    await handle({ type: "hmeReserve" }, page());
+    release({ hmeEmails: [], forwardToEmails: [], selectedForwardTo: "" });
+    await stale;
+    advance(1);
+    list(hme).mockResolvedValueOnce({ hmeEmails: [{ ...ALIAS_HERE, hme: "abc@icloud.com" }], forwardToEmails: [], selectedForwardTo: "" } as any);
+    expect(await handle({ type: "hmeAddresses" }, page())).toMatchObject({ addresses: ["abc@icloud.com"] });
+  });
+});
 
 describe("who may ask", () => {
   it("ignores other extensions entirely", async () => {

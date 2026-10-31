@@ -3,7 +3,7 @@
 // message body: a page can send anything through its content script.
 
 import { ProtocolError, type FrameTarget, type OneTimeCode, type PasswordsClient } from "@icloudkeys/core";
-import type { HmeClient, HmeSession } from "@icloudkeys/hme";
+import { addressesForSite, type HmeClient, type HmeEmail, type HmeSession } from "@icloudkeys/hme";
 import type { CodeRow, ContentRequest, FillResult, Request, Response, Status, ToContent, UiRequest } from "./messages.ts";
 
 export interface Sender {
@@ -26,7 +26,7 @@ export interface RouterEnv {
   appName: string;
   activeTab(): Promise<Tab | undefined>;
   sendToFrame(tabId: number, frameId: number, msg: ToContent): Promise<FillResult | undefined>;
-  hme?: Pick<HmeClient, "session" | "generate" | "reserve">;
+  hme?: Pick<HmeClient, "session" | "generate" | "reserve" | "list">;
   openPopup?(): Promise<void>;
   /** Shows the toolbar icon for unlocked (true) or anything else (false). */
   setIcon?(unlocked: boolean): void;
@@ -48,6 +48,7 @@ const CONTENT_TYPES = new Set<ContentRequest["type"]>([
   "inlineLaunch",
   "hmeGenerate",
   "hmeReserve",
+  "hmeAddresses",
 ]);
 
 // long enough for a captcha between a login's steps
@@ -101,6 +102,8 @@ export function createRouter(env: RouterEnv) {
   const hmeAt = new Map<number, number>();
   const hmeGeneratedAt = new Map<number, number>();
   // the address shown to each tab; a page can only ever reserve the one we generated for it
+  let hmeAliases: { at: number; emails: HmeEmail[]; ttl: number } | undefined;
+  let hmeAliasesLoading: Promise<HmeEmail[]> | undefined;
   const hmePending = new Map<number, { at: number; frameId: number; host: string; address: string }>();
   let hmeSession: { at: number; value: HmeSession } | undefined;
   // a typed password waits here, per tab, until the sign-in it was typed for is seen to work
@@ -128,6 +131,41 @@ export function createRouter(env: RouterEnv) {
     const value = await env.hme.session().catch((): HmeSession => ({ available: false }));
     hmeSession = { at: now(), value };
     return value;
+  }
+
+  function forgetAliases(): void {
+    hmeAliases = undefined;
+    hmeAliasesLoading = undefined;
+  }
+
+  function loadAliases(hme: NonNullable<RouterEnv["hme"]>): Promise<HmeEmail[]> {
+    if (hmeAliases && now() - hmeAliases.at < hmeAliases.ttl) return Promise.resolve(hmeAliases.emails);
+    if (hmeAliasesLoading) return hmeAliasesLoading;
+    const loading: Promise<HmeEmail[]> = hme
+      .list()
+      .then((list) => ({ emails: list.hmeEmails, ttl: HME_SESSION_TTL_MS }))
+      .catch(() => {
+        hmeSession = undefined;
+        return { emails: [], ttl: HME_UNAVAILABLE_TTL_MS };
+      })
+      .then(({ emails, ttl }) => {
+        // an address made meanwhile isn't in this answer, so it mustn't become the cache
+        if (hmeAliasesLoading === loading) {
+          hmeAliasesLoading = undefined;
+          hmeAliases = { at: now(), emails, ttl };
+        }
+        return emails;
+      });
+    hmeAliasesLoading = loading;
+    return loading;
+  }
+
+  async function siteAddresses(at: Where): Promise<Response> {
+    if (!env.hme || !(await checkHme()).available) {
+      forgetAliases();
+      return { ok: true, status: status(), addresses: [] };
+    }
+    return { ok: true, status: status(), addresses: addressesForSite(await loadAliases(env.hme), at.host) };
   }
 
   /** The asking frame, for content scripts. */
@@ -210,6 +248,7 @@ export function createRouter(env: RouterEnv) {
       throw e;
     });
     await env.hme.reserve(address, at.host, `Generated through ${env.appName}`);
+    forgetAliases();
     return { ok: true, status: status(), address };
   }
 
@@ -235,6 +274,7 @@ export function createRouter(env: RouterEnv) {
     hmeAt.set(at.tabId, now());
     hmePending.delete(at.tabId);
     await env.hme.reserve(pending.address, at.host, `Generated through ${env.appName}`);
+    forgetAliases();
     return { ok: true, status: status(), address: pending.address };
   }
 
@@ -345,6 +385,8 @@ export function createRouter(env: RouterEnv) {
         // the search is for the asking frame's own page, never a URL the page names
         client.launchPasswordsApp(at.frameUrls[0] ? { searchUrl: at.frameUrls[0] } : {});
         return { ok: true, status: status() };
+      case "hmeAddresses":
+        return siteAddresses(at);
       case "hmeGenerate":
         return generateAlias(at);
       case "hmeReserve":
