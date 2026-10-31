@@ -1,6 +1,6 @@
 {
   "name": "@icloudkeys/chromium",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chromium MV3 extension for Apple Passwords and Hide My Email",
   "license": "Apache-2.0",
   "private": true,

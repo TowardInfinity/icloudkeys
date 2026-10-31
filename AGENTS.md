@@ -60,6 +60,6 @@ pnpm build            # the unpacked extension lands in targets/chromium/dist
 ## Before a release
 
 1. Run all the checks above and update `CHANGELOG.md`.
-2. Bump the version in `package.json` and `targets/chromium/package.json`.
+2. Bump the version in `package.json`, `targets/chromium/package.json`, and `native/installer/Cargo.toml`.
 3. Load the build in Chrome and Brave, pair with the helper, and fill one login.
 4. Repeat step 3 after each macOS update, because Apple's helper can change which browsers it accepts.

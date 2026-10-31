@@ -4,6 +4,8 @@ User-visible changes to iCloudKeys. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
 ### Added
 
 - Offer a Hide My Email address you already made for the site on its email fields.
@@ -26,5 +28,6 @@ User-visible changes to iCloudKeys. The format follows [Keep a Changelog](https:
 
 First release: Apple Passwords AutoFill, one-time codes saved in Passwords, Hide My Email, password generation and the Rust installer for Chromium browsers on macOS.
 
-[Unreleased]: https://github.com/TowardInfinity/icloudkeys/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/TowardInfinity/icloudkeys/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/TowardInfinity/icloudkeys/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TowardInfinity/icloudkeys/releases/tag/v0.1.0
