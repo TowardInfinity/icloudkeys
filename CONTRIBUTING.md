@@ -4,7 +4,7 @@ Thank you for your interest in contributing! iCloudKeys is an open-source client
 
 ## Prerequisites
 
-- **Node.js:** Node >= 26 (managed via `fnm` or `.nvmrc`)
+- **Node.js:** Node >= 26.13.0 LTS (managed via `fnm` or `.nvmrc`)
 - **Package Manager:** `pnpm` (>= 12)
 - **Rust Toolchain:** Stable Rust with `cargo` (via `rustup`)
 - **macOS:** Tested on macOS 14+ (macOS 15.4+ enforces browser code signatures)
